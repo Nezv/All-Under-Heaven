@@ -2,6 +2,15 @@
 
 A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, structured to grow into many features.
 
+## Features
+
+- **Villages Redesign** (`feature/villages/`) — villages generate ~4× closer
+  (structure-set override), every village has a deterministic name shown on the
+  action bar when entered, first discoveries are announced in chat, and players
+  get a nearest-civilization briefing on login. With Xaero's Minimap/World Map
+  installed (bundled in dev runs), discoveries come with a clickable waypoint
+  that marks the village on the map.
+
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).
 

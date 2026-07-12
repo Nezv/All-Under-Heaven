@@ -4,9 +4,18 @@
   "item.allunderheaven.jade_seal": "Jade Seal",
   "block.allunderheaven.jade_block": "Jade Block",
 
+  "message.allunderheaven.village_entered": "Now entering %s",
+  "message.allunderheaven.village_discovered": "Discovered %s — centered near %s, %s",
+  "message.allunderheaven.nearest_civilization": "The nearest civilization is %s, about %s blocks away.",
+  "message.allunderheaven.no_civilization": "No civilizations found nearby. You are beyond the frontier.",
+
   "allunderheaven.configuration.title": "All Under Heaven Configs",
   "allunderheaven.configuration.section.allunderheaven.common.toml": "Common Settings",
   "allunderheaven.configuration.section.allunderheaven.common.toml.title": "Common Settings",
   "allunderheaven.configuration.logRegistrySummary": "Log Registry Summary",
-  "allunderheaven.configuration.enableServerGreeting": "Enable Server Greeting"
+  "allunderheaven.configuration.enableServerGreeting": "Enable Server Greeting",
+  "allunderheaven.configuration.announceVillageEntry": "Announce Village Entry",
+  "allunderheaven.configuration.sendXaeroWaypoints": "Send Xaero Map Waypoints",
+  "allunderheaven.configuration.spawnCivilizationBriefing": "Civilization Briefing On Login",
+  "allunderheaven.configuration.villageCheckIntervalTicks": "Village Check Interval (Ticks)"
 }

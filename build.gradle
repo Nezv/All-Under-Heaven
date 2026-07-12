@@ -27,7 +27,14 @@ sourceSets.main.resources {
 }
 
 repositories {
-    // Add here additional repositories if required by some of the dependencies below.
+    // Modrinth maven — used for the Xaero's map mods (dev-runtime only).
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
 }
 
 base {
@@ -113,6 +120,12 @@ configurations {
 }
 
 dependencies {
+    // Xaero's World Map + Minimap in dev runs (localRuntime = not published as a
+    // dependency of this mod). The minimap renders waypoints — including the
+    // village waypoints this mod shares — on both the minimap and the world map.
+    localRuntime "maven.modrinth:xaeros-world-map:${xaero_worldmap_version}"
+    localRuntime "maven.modrinth:xaeros-minimap:${xaero_minimap_version}"
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"

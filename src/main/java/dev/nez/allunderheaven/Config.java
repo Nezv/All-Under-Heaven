@@ -22,5 +22,23 @@ public class Config {
             .comment("Write a greeting to the log when a server starts.")
             .define("enableServerGreeting", true);
 
+    public static final ModConfigSpec.BooleanValue ANNOUNCE_VILLAGE_ENTRY = BUILDER
+            .comment("Show the village name on screen (action bar) when a player enters a village.")
+            .define("announceVillageEntry", true);
+
+    public static final ModConfigSpec.BooleanValue SEND_XAERO_WAYPOINTS = BUILDER
+            .comment("When a village is discovered, also send an Xaero's Minimap waypoint-share line in chat.",
+                    "Players running Xaero's Minimap get a clickable [Add] button that puts the village on their map;",
+                    "players without the mod see the raw share string.")
+            .define("sendXaeroWaypoints", true);
+
+    public static final ModConfigSpec.BooleanValue SPAWN_CIVILIZATION_BRIEFING = BUILDER
+            .comment("On login, tell the player about the nearest civilization (name, distance, map waypoint).")
+            .define("spawnCivilizationBriefing", true);
+
+    public static final ModConfigSpec.IntValue VILLAGE_CHECK_INTERVAL_TICKS = BUILDER
+            .comment("How often (in ticks) to check whether players entered or left a village.")
+            .defineInRange("villageCheckIntervalTicks", 20, 1, 200);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 }
