@@ -40,5 +40,27 @@ public class Config {
             .comment("How often (in ticks) to check whether players entered or left a village.")
             .defineInRange("villageCheckIntervalTicks", 20, 1, 200);
 
+    public static final ModConfigSpec.BooleanValue ENABLE_ROADS = BUILDER
+            .comment("Generate roads: rings around villages, spokes to their streets, and connections between villages.",
+                    "Roads only appear in chunks generated while this is enabled.")
+            .define("enableRoads", true);
+
+    public static final ModConfigSpec.IntValue ROAD_TRIANGLE_SLACK_BLOCKS = BUILDER
+            .comment("Triangle-bias slack 's' (blocks): the road A-C is skipped when a village B exists with |AB|+|BC| < |AC|+s.",
+                    "Bigger values prune more aggressively; tune to taste.")
+            .defineInRange("roadTriangleSlackBlocks", 48, 0, 512);
+
+    public static final ModConfigSpec.IntValue ROAD_MAX_LENGTH_BLOCKS = BUILDER
+            .comment("Villages further apart than this (blocks) never get a direct road.")
+            .defineInRange("roadMaxLengthBlocks", 560, 128, 2048);
+
+    public static final ModConfigSpec.BooleanValue ROAD_LAMPS = BUILDER
+            .comment("Place lamp posts along roads every 10-20 blocks.")
+            .define("roadLamps", true);
+
+    public static final ModConfigSpec.BooleanValue ROADS_DEBUG_LOG = BUILDER
+            .comment("Log the road network summary around spawn on server start (development aid).")
+            .define("roadsDebugLog", false);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 }

@@ -10,6 +10,13 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   get a nearest-civilization briefing on login. With Xaero's Minimap/World Map
   installed (bundled in dev runs), discoveries come with a clickable waypoint
   that marks the village on the map.
+- **Roads** (`feature/roads/`) — a seed-deterministic road network materialized
+  chunk-by-chunk during generation: a ring road wraps each village (anchored to
+  the vanilla street pieces' outer nodes via short spokes), and villages are
+  connected by meandering 3-wide shovel-path roads that respect a max slope of
+  1 block, use biome-flavored materials, and carry lamp posts every 10–20
+  blocks. Redundant connections are pruned with a triangle-bias rule
+  (skip A–C when |AB|+|BC| < |AC|+s, s configurable).
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).
