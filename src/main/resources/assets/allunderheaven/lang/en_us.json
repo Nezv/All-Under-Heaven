@@ -1,0 +1,12 @@
+{
+  "itemGroup.allunderheaven": "All Under Heaven",
+
+  "item.allunderheaven.jade_seal": "Jade Seal",
+  "block.allunderheaven.jade_block": "Jade Block",
+
+  "allunderheaven.configuration.title": "All Under Heaven Configs",
+  "allunderheaven.configuration.section.allunderheaven.common.toml": "Common Settings",
+  "allunderheaven.configuration.section.allunderheaven.common.toml.title": "Common Settings",
+  "allunderheaven.configuration.logRegistrySummary": "Log Registry Summary",
+  "allunderheaven.configuration.enableServerGreeting": "Enable Server Greeting"
+}
