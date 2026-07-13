@@ -14,6 +14,7 @@ import dev.nez.allunderheaven.feature.roads.RoadPlanner.VillageNode;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.WorldGenLevel;
@@ -44,8 +45,14 @@ public final class RoadBuilder {
     public static final AtomicLong ROAD_BLOCKS_PLACED = new AtomicLong();
     public static final AtomicLong LAMPS_PLACED = new AtomicLong();
 
-    /** Angular resolution of the village hull outline. */
+    /** Angular resolution used while measuring the village outline. */
     private static final int HULL_BINS = 72;
+    /**
+     * The outline is decimated to this many vertices, so the hull road is a
+     * polygon of straight street-like segments instead of a wavy circle —
+     * matching the rectilinear feel of the vanilla streets it connects to.
+     */
+    private static final int HULL_VERTICES = 12;
     /** Distance between the hull road's center and the outermost building corner. */
     private static final int HULL_MARGIN = 4;
 
@@ -63,9 +70,10 @@ public final class RoadBuilder {
             List<BoundingBox> streetBoxes, List<BlockPos> outerNodes) {
 
         float radiusAt(double angle) {
-            double bin = (angle / (2 * Math.PI)) * HULL_BINS;
-            int i0 = Math.floorMod((int) Math.floor(bin), HULL_BINS);
-            int i1 = (i0 + 1) % HULL_BINS;
+            int bins = hullRadii.length;
+            double bin = (angle / (2 * Math.PI)) * bins;
+            int i0 = Math.floorMod((int) Math.floor(bin), bins);
+            int i1 = (i0 + 1) % bins;
             double f = bin - Math.floor(bin);
             return (float) (hullRadii[i0] * (1 - f) + hullRadii[i1] * f);
         }
@@ -211,17 +219,28 @@ public final class RoadBuilder {
                 radii[i] = Math.max(8, (a + b) / 2);
             }
         }
-        // Margin + smoothing passes -> compact, curvy outline 1-2 blocks off the walls.
+        // Margin + one light smoothing pass, then decimate to a polygon: each
+        // vertex takes the local maximum of the bins its segments span (plus
+        // chord sag compensation) so straight edges never cut into a building.
         for (int i = 0; i < HULL_BINS; i++) {
             radii[i] += HULL_MARGIN;
         }
-        for (int pass = 0; pass < 3; pass++) {
-            float[] smoothed = new float[HULL_BINS];
-            for (int i = 0; i < HULL_BINS; i++) {
-                smoothed[i] = (radii[Math.floorMod(i - 1, HULL_BINS)] + 2 * radii[i] + radii[(i + 1) % HULL_BINS]) / 4;
-            }
-            radii = smoothed;
+        float[] smoothed = new float[HULL_BINS];
+        for (int i = 0; i < HULL_BINS; i++) {
+            smoothed[i] = (radii[Math.floorMod(i - 1, HULL_BINS)] + 2 * radii[i] + radii[(i + 1) % HULL_BINS]) / 4;
         }
+        radii = smoothed;
+
+        int span = HULL_BINS / HULL_VERTICES;
+        float[] vertices = new float[HULL_VERTICES];
+        for (int v = 0; v < HULL_VERTICES; v++) {
+            float max = 0;
+            for (int d = -span / 2 - 1; d <= span / 2 + 1; d++) {
+                max = Math.max(max, radii[Math.floorMod(v * span + d, HULL_BINS)]);
+            }
+            vertices[v] = max + 2;
+        }
+        radii = vertices;
 
         // Outer street nodes: street ends nearest the outline, spread apart.
         List<BlockPos> outer = new ArrayList<>();
@@ -259,7 +278,7 @@ public final class RoadBuilder {
         for (RoadPath.Lamp lamp : path.lamps()) {
             if (lamp.x() >= minBlockX && lamp.x() <= maxBlockX && lamp.z() >= minBlockZ && lamp.z() <= maxBlockZ
                     && !insideAnyVillage(lamp.x(), lamp.z(), villages, 0)) {
-                placeLamp(region, serverLevel, lamp.x(), lamp.z(), tally);
+                placeLamp(region, lamp.x(), lamp.z(), tally);
             }
         }
     }
@@ -279,11 +298,12 @@ public final class RoadBuilder {
             return;
         }
 
-        for (int bin = 0; bin < HULL_BINS; bin++) {
-            double a0 = bin * 2 * Math.PI / HULL_BINS;
-            double a1 = (bin + 1) * 2 * Math.PI / HULL_BINS;
-            float r0 = village.hullRadii()[bin];
-            float r1 = village.hullRadii()[(bin + 1) % HULL_BINS];
+        int vertexCount = village.hullRadii().length;
+        for (int v = 0; v < vertexCount; v++) {
+            double a0 = v * 2 * Math.PI / vertexCount;
+            double a1 = (v + 1) * 2 * Math.PI / vertexCount;
+            float r0 = village.hullRadii()[v];
+            float r1 = village.hullRadii()[(v + 1) % vertexCount];
             double x0 = cx + Math.cos(a0) * r0;
             double z0 = cz + Math.sin(a0) * r0;
             double x1 = cx + Math.cos(a1) * r1;
@@ -300,12 +320,12 @@ public final class RoadBuilder {
                 stampCell3Wide(region, x, y, z, false, null, village.streetBoxes(),
                         minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
             }
-            // A lamp every 12 bins (~60 degrees), just outside the hull road.
-            if (Config.ROAD_LAMPS.getAsBoolean() && bin % 12 == 0) {
+            // A lamp post on every hull corner, just outside the road.
+            if (Config.ROAD_LAMPS.getAsBoolean()) {
                 int lampX = (int) Math.round(cx + Math.cos(a0) * (r0 + 3));
                 int lampZ = (int) Math.round(cz + Math.sin(a0) * (r0 + 3));
                 if (lampX >= minBlockX && lampX <= maxBlockX && lampZ >= minBlockZ && lampZ <= maxBlockZ) {
-                    placeLamp(region, serverLevel, lampX, lampZ, tally);
+                    placeLamp(region, lampX, lampZ, tally);
                 }
             }
         }
@@ -407,11 +427,17 @@ public final class RoadBuilder {
         tally.roadBlocks++;
     }
 
-    private static void placeLamp(WorldGenLevel region, ServerLevel serverLevel, int x, int z, Tally tally) {
-        int groundY = terrainHeight(serverLevel, x, z);
+    /**
+     * Lamps stand on the LIVE surface (heightmap), not the pre-feature noise
+     * height — villages terraform their surroundings, and grounding lamps on
+     * noise height regularly left them floating or skipped near villages.
+     */
+    private static void placeLamp(WorldGenLevel region, int x, int z, Tally tally) {
+        int groundY = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
         BlockPos ground = new BlockPos(x, groundY, z);
         BlockState groundState = region.getBlockState(ground);
-        if (groundState.isAir() || !groundState.getFluidState().isEmpty()) {
+        if (groundState.isAir() || !groundState.getFluidState().isEmpty()
+                || groundState.is(BlockTags.LOGS) || groundState.is(BlockTags.LEAVES)) {
             return;
         }
         RoadPalette palette = RoadPalettes.at(region, ground);
