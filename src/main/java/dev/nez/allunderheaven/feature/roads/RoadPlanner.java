@@ -56,9 +56,12 @@ public final class RoadPlanner {
     private final ServerLevel level;
     private final RandomSpreadStructurePlacement placement;
     private final Set<Structure> villageStructures;
-    private final Map<Long, Optional<VillageNode>> nodes = new HashMap<>();
-    private final Map<EdgeKey, Optional<RoadPath>> paths = new HashMap<>();
-    private final Map<EdgeKey, Boolean> keptEdges = new HashMap<>();
+    // Concurrent: the road feature runs on worldgen worker threads. All values
+    // are pure functions of the seed, so racing computations are harmless.
+    private final Map<Long, Optional<VillageNode>> nodes = new ConcurrentHashMap<>();
+    private final Map<EdgeKey, Optional<RoadPath>> paths = new ConcurrentHashMap<>();
+    private final Map<EdgeKey, Boolean> keptEdges = new ConcurrentHashMap<>();
+    private final Map<Long, List<VillageNode>> rankedNeighbors = new ConcurrentHashMap<>();
 
     /** A village on the road network (position approximated by its start chunk). */
     public record VillageNode(int cellX, int cellZ, BlockPos center) {
@@ -149,9 +152,47 @@ public final class RoadPlanner {
     }
 
     /**
-     * Triangle-bias pruning, canonical per edge: the road A—C is dropped when an
-     * in-between village B exists with {@code |AB| + |BC| < |AC| + s}. Larger
-     * slack {@code s} prunes more aggressively (config: roadTriangleSlackBlocks).
+     * A village's potential neighbors, canonically sorted by distance (ties
+     * broken by cell key so every chunk computes the identical ranking).
+     */
+    private List<VillageNode> neighborsOf(VillageNode v) {
+        return rankedNeighbors.computeIfAbsent(ChunkPos.pack(v.cellX(), v.cellZ()), key -> {
+            int maxLen = Config.ROAD_MAX_LENGTH_BLOCKS.getAsInt();
+            List<VillageNode> found = new ArrayList<>();
+            for (VillageNode n : nodesAround(v.cellX(), v.cellZ(), PRUNE_SEARCH_CELLS)) {
+                if (!(n.cellX() == v.cellX() && n.cellZ() == v.cellZ()) && dist2d(v.center(), n.center()) <= maxLen) {
+                    found.add(n);
+                }
+            }
+            found.sort((n1, n2) -> {
+                int byDist = Double.compare(dist2d(v.center(), n1.center()), dist2d(v.center(), n2.center()));
+                return byDist != 0 ? byDist : Long.compare(ChunkPos.pack(n1.cellX(), n1.cellZ()), ChunkPos.pack(n2.cellX(), n2.cellZ()));
+            });
+            return List.copyOf(found);
+        });
+    }
+
+    private int rankOf(VillageNode target, List<VillageNode> ranking) {
+        for (int i = 0; i < ranking.size(); i++) {
+            VillageNode n = ranking.get(i);
+            if (n.cellX() == target.cellX() && n.cellZ() == target.cellZ()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Edge policy, canonical per edge:
+     * <ol>
+     *   <li><b>Backbone:</b> every village always connects to its single nearest
+     *       neighbor — an isolated village gets exactly one road.</li>
+     *   <li><b>Degree cap:</b> extra roads only between mutual k-nearest
+     *       neighbors (config: maxRoadsPerVillage) — kills the spider web.</li>
+     *   <li><b>Triangle bias:</b> the road A—C is dropped when an in-between
+     *       village B exists with {@code |AB| + |BC| < |AC| + s}
+     *       (config: roadTriangleSlackBlocks; bigger prunes more).</li>
+     * </ol>
      */
     public boolean edgeKept(VillageNode a, VillageNode c) {
         double direct = dist2d(a.center(), c.center());
@@ -159,6 +200,18 @@ public final class RoadPlanner {
             return false;
         }
         return keptEdges.computeIfAbsent(EdgeKey.of(a, c), key -> {
+            int rankAtoC = rankOf(c, neighborsOf(a));
+            int rankCtoA = rankOf(a, neighborsOf(c));
+            if (rankAtoC < 0 || rankCtoA < 0) {
+                return false;
+            }
+            if (rankAtoC == 0 || rankCtoA == 0) {
+                return true; // nearest-neighbor backbone is always kept
+            }
+            int maxDegree = Config.MAX_ROADS_PER_VILLAGE.getAsInt();
+            if (rankAtoC >= maxDegree || rankCtoA >= maxDegree) {
+                return false;
+            }
             double slack = Config.ROAD_TRIANGLE_SLACK_BLOCKS.getAsInt();
             int midCellX = Math.floorDiv(a.cellX() + c.cellX(), 2);
             int midCellZ = Math.floorDiv(a.cellZ() + c.cellZ(), 2);

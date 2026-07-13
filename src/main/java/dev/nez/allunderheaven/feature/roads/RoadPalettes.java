@@ -2,8 +2,8 @@ package dev.nez.allunderheaven.feature.roads;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Blocks;
@@ -57,7 +57,7 @@ public final class RoadPalettes {
     private RoadPalettes() {
     }
 
-    public static RoadPalette at(ServerLevel level, BlockPos pos) {
+    public static RoadPalette at(LevelReader level, BlockPos pos) {
         Holder<Biome> biome = level.getBiome(pos);
         if (biome.is(Biomes.DESERT)) {
             return DESERT;

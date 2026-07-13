@@ -7,49 +7,20 @@ import dev.nez.allunderheaven.Config;
 import dev.nez.allunderheaven.feature.roads.RoadPlanner.VillageNode;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.level.ChunkEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 
 /**
- * Roads — wires the deterministic road network into world generation.
- *
- * <p>Every newly generated overworld chunk asks the {@link RoadPlanner} which
- * inter-village roads, village ring roads and street spokes cross it, and the
- * {@link RoadBuilder} stamps exactly the blocks inside that chunk. Because the
- * whole plan is a pure function of the world seed, roads join up seamlessly
- * across chunks no matter the order in which they generate.
+ * Lifecycle glue for the road system: clears the per-level plan caches on
+ * shutdown and, when {@code roadsDebugLog} is enabled, prints a network
+ * summary at startup and force-generates one road corridor so materialization
+ * can be verified end-to-end without walking there.
  */
 @EventBusSubscriber(modid = AllUnderHeaven.MOD_ID)
-public final class RoadsFeature {
-    private RoadsFeature() {
-    }
-
-    @SubscribeEvent
-    static void onChunkLoad(ChunkEvent.Load event) {
-        if (!event.isNewChunk() || !Config.ENABLE_ROADS.getAsBoolean()) {
-            return;
-        }
-        if (!(event.getChunk() instanceof LevelChunk chunk) || !(chunk.getLevel() instanceof ServerLevel level)) {
-            return;
-        }
-        if (level.dimension() != Level.OVERWORLD) {
-            return;
-        }
-        try {
-            long before = RoadBuilder.ROAD_BLOCKS_PLACED.get();
-            RoadBuilder.buildForChunk(level, chunk);
-            long placed = RoadBuilder.ROAD_BLOCKS_PLACED.get() - before;
-            if (placed > 0 && Config.ROADS_DEBUG_LOG.getAsBoolean()) {
-                AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: chunk {} +{} road blocks", chunk.getPos(), placed);
-            }
-        } catch (Exception e) {
-            AllUnderHeaven.LOGGER.error("[All Under Heaven] Road building failed for chunk {}", chunk.getPos(), e);
-        }
+public final class RoadsDebug {
+    private RoadsDebug() {
     }
 
     @SubscribeEvent
@@ -81,14 +52,12 @@ public final class RoadsFeature {
                 }
             }
         }
-        AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: {} villages within 3 cells of spawn, {} roads kept, {} pruned by triangle rule (s={})",
-                nodes.size(), kept, pruned, Config.ROAD_TRIANGLE_SLACK_BLOCKS.getAsInt());
+        AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: {} villages within 3 cells of spawn, {} roads kept, {} pruned (maxRoadsPerVillage={}, s={})",
+                nodes.size(), kept, pruned, Config.MAX_ROADS_PER_VILLAGE.getAsInt(), Config.ROAD_TRIANGLE_SLACK_BLOCKS.getAsInt());
         for (VillageNode node : nodes) {
             AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: village node at {} (cell {},{})",
                     node.center(), node.cellX(), node.cellZ());
         }
-        AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: {} road blocks and {} lamps placed so far",
-                RoadBuilder.ROAD_BLOCKS_PLACED.get(), RoadBuilder.LAMPS_PLACED.get());
 
         // Force-generate the chunks along the first kept edge so materialization
         // is exercised end-to-end even though vanilla pregenerates almost nothing.
@@ -118,5 +87,6 @@ public final class RoadsFeature {
     @SubscribeEvent
     static void onServerStopped(ServerStoppedEvent event) {
         RoadPlanner.clearAll();
+        RoadBuilder.clearCaches();
     }
 }

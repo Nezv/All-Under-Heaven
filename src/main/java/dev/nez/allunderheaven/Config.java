@@ -50,6 +50,11 @@ public class Config {
                     "Bigger values prune more aggressively; tune to taste.")
             .defineInRange("roadTriangleSlackBlocks", 48, 0, 512);
 
+    public static final ModConfigSpec.IntValue MAX_ROADS_PER_VILLAGE = BUILDER
+            .comment("Besides its guaranteed nearest-neighbor road, a village only accepts extra roads from its",
+                    "k nearest neighbors (mutually). Keeps the network sparse instead of a spider web.")
+            .defineInRange("maxRoadsPerVillage", 2, 1, 8);
+
     public static final ModConfigSpec.IntValue ROAD_MAX_LENGTH_BLOCKS = BUILDER
             .comment("Villages further apart than this (blocks) never get a direct road.")
             .defineInRange("roadMaxLengthBlocks", 560, 128, 2048);

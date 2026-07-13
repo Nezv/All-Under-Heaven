@@ -6,6 +6,7 @@ import com.mojang.logging.LogUtils;
 
 import dev.nez.allunderheaven.registry.ModBlocks;
 import dev.nez.allunderheaven.registry.ModCreativeTabs;
+import dev.nez.allunderheaven.registry.ModFeatures;
 import dev.nez.allunderheaven.registry.ModItems;
 import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
@@ -28,6 +29,7 @@ public class AllUnderHeaven {
         ModBlocks.BLOCKS.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
         ModCreativeTabs.CREATIVE_MODE_TABS.register(modEventBus);
+        ModFeatures.FEATURES.register(modEventBus);
 
         modEventBus.addListener(this::commonSetup);
 
