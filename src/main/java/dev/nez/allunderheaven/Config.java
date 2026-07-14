@@ -45,6 +45,12 @@ public class Config {
                     "Roads only appear in chunks generated while this is enabled.")
             .define("enableRoads", true);
 
+    public static final ModConfigSpec.IntValue ROAD_WRAP_MARGIN_BLOCKS = BUILDER
+            .comment("How far the village wrap road sits from the building walls (blocks, centerline).",
+                    "The road is 3 wide, so its inner edge ends up about (this - 1) blocks off the walls.",
+                    "Larger = roomier ring around the village; only affects chunks generated afterwards.")
+            .defineInRange("roadWrapMarginBlocks", 4, 1, 16);
+
     public static final ModConfigSpec.IntValue ROAD_TRIANGLE_SLACK_BLOCKS = BUILDER
             .comment("Triangle-bias slack 's' (blocks): the road A-C is skipped when a village B exists with |AB|+|BC| < |AC|+s.",
                     "Bigger values prune more aggressively; tune to taste.")

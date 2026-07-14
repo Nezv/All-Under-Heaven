@@ -127,7 +127,7 @@ public final class RoadBuilder {
         for (StructureStart start : structureManager.startsForStructure(pos, planner.villageStructures()::contains)) {
             if (start.isValid()) {
                 villages.add(VILLAGE_CACHE.computeIfAbsent(start.getChunkPos().pack(), key -> {
-                    VillageContour contour = VillageContour.of(start);
+                    VillageContour contour = VillageContour.of(start, Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt());
                     if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
                         AllUnderHeaven.LOGGER.info(
                                 "[All Under Heaven] Roads debug: wrap for village at {} — {} loop points, {} corners, {} outer nodes",

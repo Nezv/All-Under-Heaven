@@ -13,8 +13,9 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
 - **Roads** (`feature/roads/`) — a seed-deterministic road network generated
   as part of worldgen itself (a feature at the `top_layer_modification` step,
   so roads appear with the terrain, off the server thread, exactly like
-  villages do). A concave wrap road hugs each village's buildings (~2 blocks
-  off the walls: building footprints are morphologically closed, margin-dilated
+  villages do). A concave wrap road hugs each village's buildings (a
+  configurable distance off the walls — `roadWrapMarginBlocks`, default 4:
+  building footprints are morphologically closed, margin-dilated
   and boundary-traced into a straightened loop); stretches where a vanilla
   street already runs are left to the street, so wrap and streets merge into
   one network. Villages link to each other with meandering 3-wide shovel-path

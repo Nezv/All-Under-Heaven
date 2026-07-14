@@ -25,8 +25,6 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 public final class VillageContour {
     /** Gap (blocks) up to which separate buildings merge into one wrapped cluster. */
     private static final int GAP_BRIDGE = 8;
-    /** Distance between the wrap road's centerline and the building walls. */
-    private static final int WRAP_MARGIN = 2;
     /** Douglas-Peucker tolerance for straightening the traced boundary. */
     private static final double SIMPLIFY_TOLERANCE = 2.5;
     /** Building pieces smaller than this (either axis) are decor and ignored. */
@@ -99,10 +97,14 @@ public final class VillageContour {
         return gx >= 0 && gz >= 0 && gx < gridW && gz < gridH && interior[gz * gridW + gx];
     }
 
-    public static VillageContour of(StructureStart start) {
+    /**
+     * @param wrapMargin distance (blocks) between the wrap road centerline and
+     *                   the building walls; larger values give a roomier ring.
+     */
+    public static VillageContour of(StructureStart start, int wrapMargin) {
         BoundingBox bounds = start.getBoundingBox();
         BlockPos center = bounds.getCenter();
-        int pad = GAP_BRIDGE + WRAP_MARGIN + 4;
+        int pad = GAP_BRIDGE + wrapMargin + 4;
         int minX = bounds.minX() - pad;
         int minZ = bounds.minZ() - pad;
         int w = bounds.maxX() - bounds.minX() + 1 + 2 * pad;
@@ -138,7 +140,7 @@ public final class VillageContour {
 
         // 2. Morphological closing (merge nearby buildings), then wrap margin.
         boolean[] closed = erode(dilate(grid, w, h, GAP_BRIDGE), w, h, GAP_BRIDGE);
-        boolean[] interior = dilate(closed, w, h, WRAP_MARGIN);
+        boolean[] interior = dilate(closed, w, h, wrapMargin);
 
         // 3. Trace the boundary of the largest connected region.
         List<long[]> boundary = traceLargestBoundary(interior, w, h);
