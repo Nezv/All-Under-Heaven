@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+import dev.nez.allunderheaven.AllUnderHeaven;
 import dev.nez.allunderheaven.Config;
 import dev.nez.allunderheaven.feature.roads.RoadPalettes.RoadPalette;
 import dev.nez.allunderheaven.feature.roads.RoadPlanner.VillageNode;
@@ -23,9 +24,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
-import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
-import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 
 /**
@@ -33,58 +31,25 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
  * chunk is being generated (worldgen threads). Only blocks inside the chunk
  * are touched, so the result is independent of generation order.
  *
- * <p>Per chunk this stamps: (a) slices of inter-village roads, (b) a curvy
- * hull road hugging each nearby village's buildings, and (c) short spokes
- * connecting the vanilla street network's outer ends to that hull.
- *
- * <p>Village geometry comes from the structure starts referenced by the
- * chunk's own already-generated data (the same lookup vanilla uses to place
- * structure pieces) — resolving it never forces new chunk generation.
+ * <p>Per chunk this stamps: (a) slices of inter-village roads, clipped at the
+ * village wrap and re-anchored onto the village's natural outer street ends,
+ * and (b) the wrap itself — a concave contour hugging the buildings (see
+ * {@link VillageContour}), with stretches that coincide with vanilla streets
+ * left to the streets themselves.
  */
 public final class RoadBuilder {
     public static final AtomicLong ROAD_BLOCKS_PLACED = new AtomicLong();
     public static final AtomicLong LAMPS_PLACED = new AtomicLong();
 
-    /** Angular resolution used while measuring the village outline. */
-    private static final int HULL_BINS = 72;
-    /**
-     * The outline is decimated to this many vertices, so the hull road is a
-     * polygon of straight street-like segments instead of a wavy circle —
-     * matching the rectilinear feel of the vanilla streets it connects to.
-     */
-    private static final int HULL_VERTICES = 12;
-    /** Distance between the hull road's center and the outermost building corner. */
-    private static final int HULL_MARGIN = 4;
+    /** Max bearing difference (radians) for re-anchoring a road onto an outer street end. */
+    private static final double CONNECTOR_MAX_BEARING = Math.toRadians(75);
+    /** How far a path endpoint may sit from a village center and still belong to it. */
+    private static final int ENDPOINT_MATCH_DISTANCE = 48;
 
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     /** Cached village geometry, keyed by packed start-chunk position. */
-    private static final Map<Long, LocalVillage> VILLAGE_CACHE = new ConcurrentHashMap<>();
-
-    /**
-     * Village geometry resolved from structure references: a smoothed polar
-     * outline ({@code hullRadii} per angular bin, measured from {@code center})
-     * that hugs the buildings, plus the vanilla street pieces.
-     */
-    private record LocalVillage(BlockPos center, float[] hullRadii,
-            List<BoundingBox> streetBoxes, List<BlockPos> outerNodes) {
-
-        float radiusAt(double angle) {
-            int bins = hullRadii.length;
-            double bin = (angle / (2 * Math.PI)) * bins;
-            int i0 = Math.floorMod((int) Math.floor(bin), bins);
-            int i1 = (i0 + 1) % bins;
-            double f = bin - Math.floor(bin);
-            return (float) (hullRadii[i0] * (1 - f) + hullRadii[i1] * f);
-        }
-
-        boolean contains(int x, int z, float innerShrink) {
-            double dx = x - center.getX();
-            double dz = z - center.getZ();
-            double dist = Math.sqrt(dx * dx + dz * dz);
-            return dist < radiusAt(angleOf(dx, dz)) - innerShrink;
-        }
-    }
+    private static final Map<Long, VillageContour> VILLAGE_CACHE = new ConcurrentHashMap<>();
 
     /** Mutable per-chunk counters (worldgen threads each get their own). */
     private static final class Tally {
@@ -117,11 +82,11 @@ public final class RoadBuilder {
             return 0;
         }
 
-        List<LocalVillage> villages = resolveLocalVillages(region, serverLevel, pos, planner);
+        List<VillageContour> villages = resolveLocalVillages(region, serverLevel, pos, planner);
         Set<Long> stamped = new HashSet<>();
         Tally tally = new Tally();
 
-        // (a) Inter-village roads.
+        // (a) Inter-village roads (with wrap clipping + outer-node connectors).
         for (int i = 0; i < nodes.size(); i++) {
             for (int j = i + 1; j < nodes.size(); j++) {
                 VillageNode a = nodes.get(i);
@@ -138,10 +103,9 @@ public final class RoadBuilder {
             }
         }
 
-        // (b) Hull roads hugging each village and (c) street spokes.
-        for (LocalVillage village : villages) {
-            stampHull(region, serverLevel, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
-            stampSpokes(region, serverLevel, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+        // (b) The building-hugging wrap of each nearby village.
+        for (VillageContour village : villages) {
+            stampWrap(region, serverLevel, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
 
         ROAD_BLOCKS_PLACED.addAndGet(tally.roadBlocks);
@@ -154,109 +118,31 @@ public final class RoadBuilder {
      * the region-scoped structure manager during worldgen — the exact lookup
      * vanilla uses to place structure pieces, guaranteed non-generating.
      */
-    private static List<LocalVillage> resolveLocalVillages(WorldGenLevel region, ServerLevel serverLevel,
+    private static List<VillageContour> resolveLocalVillages(WorldGenLevel region, ServerLevel serverLevel,
             ChunkPos pos, RoadPlanner planner) {
         StructureManager structureManager = region instanceof WorldGenRegion worldGenRegion
                 ? serverLevel.structureManager().forWorldGenRegion(worldGenRegion)
                 : serverLevel.structureManager();
-        List<LocalVillage> villages = new ArrayList<>();
+        List<VillageContour> villages = new ArrayList<>();
         for (StructureStart start : structureManager.startsForStructure(pos, planner.villageStructures()::contains)) {
             if (start.isValid()) {
-                villages.add(VILLAGE_CACHE.computeIfAbsent(start.getChunkPos().pack(), key -> buildVillage(start)));
+                villages.add(VILLAGE_CACHE.computeIfAbsent(start.getChunkPos().pack(), key -> {
+                    VillageContour contour = VillageContour.of(start);
+                    if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
+                        AllUnderHeaven.LOGGER.info(
+                                "[All Under Heaven] Roads debug: wrap for village at {} — {} loop points, {} corners, {} outer nodes",
+                                contour.center(), contour.loopPoints().length,
+                                contour.cornerIndices().length, contour.outerNodes().size());
+                    }
+                    return contour;
+                }));
             }
         }
         return villages;
     }
 
-    private static LocalVillage buildVillage(StructureStart start) {
-        BoundingBox bounds = start.getBoundingBox();
-        BlockPos center = bounds.getCenter();
-
-        List<BoundingBox> streets = new ArrayList<>();
-        List<BoundingBox> pieceBoxes = new ArrayList<>();
-        for (StructurePiece piece : start.getPieces()) {
-            pieceBoxes.add(piece.getBoundingBox());
-            if (piece instanceof PoolElementStructurePiece pool && pool.getElement().toString().contains("streets")) {
-                streets.add(piece.getBoundingBox());
-            }
-        }
-
-        // Polar outline: farthest building corner per angular bin, plus margin.
-        float[] radii = new float[HULL_BINS];
-        for (BoundingBox box : pieceBoxes) {
-            int[][] corners = {
-                    {box.minX(), box.minZ()}, {box.minX(), box.maxZ()},
-                    {box.maxX(), box.minZ()}, {box.maxX(), box.maxZ()},
-                    {(box.minX() + box.maxX()) / 2, box.minZ()}, {(box.minX() + box.maxX()) / 2, box.maxZ()},
-                    {box.minX(), (box.minZ() + box.maxZ()) / 2}, {box.maxX(), (box.minZ() + box.maxZ()) / 2}
-            };
-            for (int[] corner : corners) {
-                double dx = corner[0] - center.getX();
-                double dz = corner[1] - center.getZ();
-                float dist = (float) Math.sqrt(dx * dx + dz * dz);
-                int bin = (int) Math.floor(angleOf(dx, dz) / (2 * Math.PI) * HULL_BINS) % HULL_BINS;
-                // A corner shades its own bin and the two adjacent ones so thin
-                // buildings can't poke through between bins.
-                for (int d = -1; d <= 1; d++) {
-                    int b = Math.floorMod(bin + d, HULL_BINS);
-                    radii[b] = Math.max(radii[b], dist);
-                }
-            }
-        }
-        // Fill bins no corner reached (interpolate between neighbors, circular).
-        for (int i = 0; i < HULL_BINS; i++) {
-            if (radii[i] == 0) {
-                int prev = i;
-                while (radii[Math.floorMod(prev - 1, HULL_BINS)] == 0 && prev > i - HULL_BINS) {
-                    prev--;
-                }
-                int next = i;
-                while (radii[Math.floorMod(next + 1, HULL_BINS)] == 0 && next < i + HULL_BINS) {
-                    next++;
-                }
-                float a = radii[Math.floorMod(prev - 1, HULL_BINS)];
-                float b = radii[Math.floorMod(next + 1, HULL_BINS)];
-                radii[i] = Math.max(8, (a + b) / 2);
-            }
-        }
-        // Margin + one light smoothing pass, then decimate to a polygon: each
-        // vertex takes the local maximum of the bins its segments span (plus
-        // chord sag compensation) so straight edges never cut into a building.
-        for (int i = 0; i < HULL_BINS; i++) {
-            radii[i] += HULL_MARGIN;
-        }
-        float[] smoothed = new float[HULL_BINS];
-        for (int i = 0; i < HULL_BINS; i++) {
-            smoothed[i] = (radii[Math.floorMod(i - 1, HULL_BINS)] + 2 * radii[i] + radii[(i + 1) % HULL_BINS]) / 4;
-        }
-        radii = smoothed;
-
-        int span = HULL_BINS / HULL_VERTICES;
-        float[] vertices = new float[HULL_VERTICES];
-        for (int v = 0; v < HULL_VERTICES; v++) {
-            float max = 0;
-            for (int d = -span / 2 - 1; d <= span / 2 + 1; d++) {
-                max = Math.max(max, radii[Math.floorMod(v * span + d, HULL_BINS)]);
-            }
-            vertices[v] = max + 2;
-        }
-        radii = vertices;
-
-        // Outer street nodes: street ends nearest the outline, spread apart.
-        List<BlockPos> outer = new ArrayList<>();
-        streets.stream()
-                .map(BoundingBox::getCenter)
-                .sorted((p1, p2) -> Integer.compare(distSqr2d(p2, center), distSqr2d(p1, center)))
-                .forEach(p -> {
-                    if (outer.size() < 6 && outer.stream().allMatch(o -> distSqr2d(o, p) > 24 * 24)) {
-                        outer.add(p);
-                    }
-                });
-        return new LocalVillage(center, radii, List.copyOf(streets), List.copyOf(outer));
-    }
-
     private static void stampPath(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
-            List<LocalVillage> villages,
+            List<VillageContour> villages,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         int n = path.sampleCount();
         for (int i = 1; i < n; i++) {
@@ -271,59 +157,144 @@ public final class RoadBuilder {
                 }
                 int y = Math.round(path.ys()[i - 1] + (path.ys()[i] - path.ys()[i - 1]) * (float) f);
                 boolean wet = path.wet()[i - 1] || path.wet()[i];
-                stampCell3Wide(region, x, y, z, wet, villages, null,
+                stampCell3Wide(region, x, y, z, wet, villages,
                         minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
             }
         }
         for (RoadPath.Lamp lamp : path.lamps()) {
             if (lamp.x() >= minBlockX && lamp.x() <= maxBlockX && lamp.z() >= minBlockZ && lamp.z() <= maxBlockZ
-                    && !insideAnyVillage(lamp.x(), lamp.z(), villages, 0)) {
+                    && !insideAnyVillage(lamp.x(), lamp.z(), villages)) {
                 placeLamp(region, lamp.x(), lamp.z(), tally);
             }
         }
+        // Re-anchor each end of the road onto the village's natural outer
+        // street end (the blue-to-contour derivation).
+        stampConnector(region, serverLevel, path, villages, true,
+                minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+        stampConnector(region, serverLevel, path, villages, false,
+                minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
     }
 
-    /** Walks the polar outline and stamps the 3-wide hull road, with a few lamps. */
-    private static void stampHull(WorldGenLevel region, ServerLevel serverLevel, LocalVillage village,
+    /**
+     * Where a road meets its endpoint village, route the last stretch to the
+     * best-facing vanilla street end instead of stopping dead at the wrap.
+     * Deterministic: depends only on the path and the village geometry.
+     */
+    private static void stampConnector(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
+            List<VillageContour> villages, boolean fromStart,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
-        // Quick reject: hull's max radius vs chunk box.
-        float maxRadius = 0;
-        for (float r : village.hullRadii()) {
-            maxRadius = Math.max(maxRadius, r);
+        int n = path.sampleCount();
+        int endX = fromStart ? path.xs()[0] : path.xs()[n - 1];
+        int endZ = fromStart ? path.zs()[0] : path.zs()[n - 1];
+
+        VillageContour village = null;
+        for (VillageContour candidate : villages) {
+            int dx = candidate.center().getX() - endX;
+            int dz = candidate.center().getZ() - endZ;
+            if (dx * dx + dz * dz <= ENDPOINT_MATCH_DISTANCE * ENDPOINT_MATCH_DISTANCE) {
+                village = candidate;
+                break;
+            }
         }
-        int cx = village.center().getX();
-        int cz = village.center().getZ();
-        if (cx + maxRadius + 2 < minBlockX || cx - maxRadius - 2 > maxBlockX
-                || cz + maxRadius + 2 < minBlockZ || cz - maxRadius - 2 > maxBlockZ) {
+        if (village == null || village.outerNodes().isEmpty()) {
             return;
         }
 
-        int vertexCount = village.hullRadii().length;
-        for (int v = 0; v < vertexCount; v++) {
-            double a0 = v * 2 * Math.PI / vertexCount;
-            double a1 = (v + 1) * 2 * Math.PI / vertexCount;
-            float r0 = village.hullRadii()[v];
-            float r1 = village.hullRadii()[(v + 1) % vertexCount];
-            double x0 = cx + Math.cos(a0) * r0;
-            double z0 = cz + Math.sin(a0) * r0;
-            double x1 = cx + Math.cos(a1) * r1;
-            double z1 = cz + Math.sin(a1) * r1;
-            int steps = Math.max(1, (int) Math.ceil(Math.hypot(x1 - x0, z1 - z0)));
-            for (int s = 0; s < steps; s++) {
-                double f = (double) s / steps;
-                int x = (int) Math.round(x0 + (x1 - x0) * f);
-                int z = (int) Math.round(z0 + (z1 - z0) * f);
-                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+        // Exit point: first path sample outside the wrap, walking outward.
+        int exitX = endX;
+        int exitZ = endZ;
+        boolean found = false;
+        for (int k = 0; k < n; k++) {
+            int i = fromStart ? k : n - 1 - k;
+            if (!village.contains(path.xs()[i], path.zs()[i])) {
+                exitX = path.xs()[i];
+                exitZ = path.zs()[i];
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return;
+        }
+
+        double exitBearing = Math.atan2(exitZ - village.center().getZ(), exitX - village.center().getX());
+        BlockPos best = null;
+        double bestDiff = CONNECTOR_MAX_BEARING;
+        for (BlockPos node : village.outerNodes()) {
+            double bearing = Math.atan2(node.getZ() - village.center().getZ(), node.getX() - village.center().getX());
+            double diff = Math.abs(Math.atan2(Math.sin(bearing - exitBearing), Math.cos(bearing - exitBearing)));
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = node;
+            }
+        }
+        if (best == null) {
+            return; // no street end faces this road; it terminates on the wrap
+        }
+
+        int steps = Math.max(1, (int) Math.ceil(Math.hypot(best.getX() - exitX, best.getZ() - exitZ)));
+        if (steps < 3) {
+            return; // the road already arrives at the street end
+        }
+        for (int s = 0; s <= steps; s++) {
+            int x = (int) Math.round(exitX + (best.getX() - exitX) * (double) s / steps);
+            int z = (int) Math.round(exitZ + (best.getZ() - exitZ) * (double) s / steps);
+            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                continue;
+            }
+            int y = terrainHeight(serverLevel, x, z);
+            stampCell3Wide(region, x, y, z, false, null,
+                    minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+        }
+    }
+
+    /**
+     * Walks the precomputed wrap loop. Stretches where the vanilla street
+     * surface already runs (detected from actual placed path blocks — street
+     * pieces are laid down before this decoration step) are left to the
+     * street, so the wrap and the streets merge into one network.
+     */
+    private static void stampWrap(WorldGenLevel region, ServerLevel serverLevel, VillageContour village,
+            int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
+        long[] loop = village.loopPoints();
+        for (int i = 0; i < loop.length; i++) {
+            int x = VillageContour.pointX(loop[i]);
+            int z = VillageContour.pointZ(loop[i]);
+            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                continue;
+            }
+            if (isStreetHere(region, x, z)) {
+                continue; // the vanilla street carries the wrap here
+            }
+            int y = terrainHeight(serverLevel, x, z);
+            stampCell3Wide(region, x, y, z, false, null,
+                    minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+        }
+
+        if (Config.ROAD_LAMPS.getAsBoolean()) {
+            for (int corner : village.cornerIndices()) {
+                int x = VillageContour.pointX(loop[corner]);
+                int z = VillageContour.pointZ(loop[corner]);
+                if (x < minBlockX || x > maxBlockX || z < minBlockZ || z > maxBlockZ) {
                     continue;
                 }
-                int y = terrainHeight(serverLevel, x, z);
-                stampCell3Wide(region, x, y, z, false, null, village.streetBoxes(),
-                        minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
-            }
-            // A lamp post on every hull corner, just outside the road.
-            if (Config.ROAD_LAMPS.getAsBoolean()) {
-                int lampX = (int) Math.round(cx + Math.cos(a0) * (r0 + 3));
-                int lampZ = (int) Math.round(cz + Math.sin(a0) * (r0 + 3));
+                if (isStreetHere(region, x, z)) {
+                    continue;
+                }
+                // Outward normal from the loop tangent, pointed away from center.
+                int before = Math.floorMod(corner - 3, loop.length);
+                int after = (corner + 3) % loop.length;
+                double tx = VillageContour.pointX(loop[after]) - VillageContour.pointX(loop[before]);
+                double tz = VillageContour.pointZ(loop[after]) - VillageContour.pointZ(loop[before]);
+                double len = Math.max(1.0, Math.hypot(tx, tz));
+                double nx = -tz / len;
+                double nz = tx / len;
+                if (nx * (x - village.center().getX()) + nz * (z - village.center().getZ()) < 0) {
+                    nx = -nx;
+                    nz = -nz;
+                }
+                int lampX = (int) Math.round(x + nx * 3);
+                int lampZ = (int) Math.round(z + nz * 3);
                 if (lampX >= minBlockX && lampX <= maxBlockX && lampZ >= minBlockZ && lampZ <= maxBlockZ) {
                     placeLamp(region, lampX, lampZ, tally);
                 }
@@ -331,41 +302,14 @@ public final class RoadBuilder {
         }
     }
 
-    /** Connects the vanilla street ends outward to the hull road. */
-    private static void stampSpokes(WorldGenLevel region, ServerLevel serverLevel, LocalVillage village,
-            int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
-        int cx = village.center().getX();
-        int cz = village.center().getZ();
-        for (BlockPos outer : village.outerNodes()) {
-            double dx = outer.getX() - cx;
-            double dz = outer.getZ() - cz;
-            double dist = Math.max(1.0, Math.sqrt(dx * dx + dz * dz));
-            double targetR = village.radiusAt(angleOf(dx, dz)) + 1;
-            int targetX = (int) Math.round(cx + dx / dist * targetR);
-            int targetZ = (int) Math.round(cz + dz / dist * targetR);
-
-            int steps = Math.max(1, (int) Math.ceil(Math.hypot(targetX - outer.getX(), targetZ - outer.getZ())));
-            for (int s = 0; s <= steps; s++) {
-                int x = (int) Math.round(outer.getX() + (targetX - outer.getX()) * (double) s / steps);
-                int z = (int) Math.round(outer.getZ() + (targetZ - outer.getZ()) * (double) s / steps);
-                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
-                    continue;
-                }
-                int y = terrainHeight(serverLevel, x, z);
-                stampCell3Wide(region, x, y, z, false, null, village.streetBoxes(),
-                        minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
-            }
-        }
-    }
-
     /**
      * Places a 3-wide road patch centered on (x, z) at the planned height.
-     * Cells inside {@code interiorClip} village hulls are skipped so
-     * inter-village roads hand over to the hull; cells inside {@code boxClip}
-     * boxes are skipped so hull/spokes never pave over the vanilla streets.
+     * Cells inside {@code interiorClip} village wraps are skipped so roads
+     * hand over to the wrap. Existing street surface is never overwritten
+     * (checked per block in {@link #placeRoadColumn}).
      */
     private static void stampCell3Wide(WorldGenLevel region, int x, int plannedY, int z, boolean wet,
-            List<LocalVillage> interiorClip, List<BoundingBox> boxClip,
+            List<VillageContour> interiorClip,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
@@ -378,10 +322,7 @@ public final class RoadBuilder {
                 if (!stamped.add(key)) {
                     continue;
                 }
-                if (interiorClip != null && insideAnyVillage(bx, bz, interiorClip, 1.5f)) {
-                    continue;
-                }
-                if (boxClip != null && insideAnyBox(bx, bz, boxClip)) {
+                if (interiorClip != null && insideAnyVillage(bx, bz, interiorClip)) {
                     continue;
                 }
                 placeRoadColumn(region, bx, plannedY, bz, wet, tally);
@@ -389,26 +330,41 @@ public final class RoadBuilder {
         }
     }
 
-    private static boolean insideAnyVillage(int x, int z, List<LocalVillage> villages, float innerShrink) {
-        for (LocalVillage village : villages) {
-            if (village.contains(x, z, innerShrink)) {
+    private static boolean insideAnyVillage(int x, int z, List<VillageContour> villages) {
+        for (VillageContour village : villages) {
+            if (village.contains(x, z)) {
                 return true;
             }
         }
         return false;
     }
 
-    private static boolean insideAnyBox(int x, int z, List<BoundingBox> boxes) {
-        for (BoundingBox b : boxes) {
-            if (x >= b.minX() && x <= b.maxX() && z >= b.minZ() && z <= b.maxZ()) {
-                return true;
+    /**
+     * True when the vanilla street surface actually runs at/around (x, z) —
+     * decided from placed path blocks, because street piece bounding boxes
+     * include wide grass margins and are useless as a proximity signal.
+     */
+    private static boolean isStreetHere(WorldGenLevel region, int x, int z) {
+        int pathBlocks = 0;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                int y = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x + dx, z + dz) - 1;
+                if (region.getBlockState(new BlockPos(x + dx, y, z + dz)).is(Blocks.DIRT_PATH)) {
+                    pathBlocks++;
+                }
             }
         }
-        return false;
+        return pathBlocks >= 6;
     }
 
     private static void placeRoadColumn(WorldGenLevel region, int x, int y, int z, boolean wet, Tally tally) {
         BlockPos top = new BlockPos(x, y, z);
+        // Never overwrite existing street/road surface — vanilla streets keep
+        // their blocks, and junctions merge instead of stacking.
+        int surfaceY = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        if (region.getBlockState(new BlockPos(x, surfaceY, z)).is(Blocks.DIRT_PATH)) {
+            return;
+        }
         RoadPalette palette = RoadPalettes.at(region, top);
         for (int dy = 1; dy <= 3; dy++) {
             BlockPos above = top.above(dy);
@@ -456,16 +412,5 @@ public final class RoadBuilder {
         ChunkGenerator generator = serverLevel.getChunkSource().getGenerator();
         RandomState randomState = serverLevel.getChunkSource().randomState();
         return generator.getFirstOccupiedHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, serverLevel, randomState);
-    }
-
-    private static double angleOf(double dx, double dz) {
-        double angle = Math.atan2(dz, dx);
-        return angle < 0 ? angle + 2 * Math.PI : angle;
-    }
-
-    private static int distSqr2d(BlockPos p1, BlockPos p2) {
-        int dx = p1.getX() - p2.getX();
-        int dz = p1.getZ() - p2.getZ();
-        return dx * dx + dz * dz;
     }
 }
