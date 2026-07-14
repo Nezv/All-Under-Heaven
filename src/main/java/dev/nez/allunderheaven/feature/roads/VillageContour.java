@@ -2,7 +2,10 @@ package dev.nez.allunderheaven.feature.roads;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
 
 import dev.nez.allunderheaven.feature.villages.VillageTier;
 import net.minecraft.core.BlockPos;
@@ -50,13 +53,17 @@ public final class VillageContour {
     /** Tier-2 wall courses (packed block coords): inner ring and outer ring. */
     private final long[] wallInner;
     private final long[] wallOuter;
+    /** Membership set over both wall courses, for gate carving lookups. */
+    private final Set<Long> wallCells;
+    /** Tier-2 guard tower centers (y unused), sitting on the wall centerline. */
+    private final List<BlockPos> towerCenters;
     private final List<BoundingBox> streetBoxes;
     private final List<BlockPos> outerNodes;
 
     private VillageContour(BlockPos center, VillageTier tier, BoundingBox structureBounds,
             int gridMinX, int gridMinZ, int gridW, int gridH,
             boolean[] interior, long[] loopPoints, int[] cornerIndices,
-            long[] wallInner, long[] wallOuter,
+            long[] wallInner, long[] wallOuter, List<BlockPos> towerCenters,
             List<BoundingBox> streetBoxes, List<BlockPos> outerNodes) {
         this.center = center;
         this.tier = tier;
@@ -70,6 +77,15 @@ public final class VillageContour {
         this.cornerIndices = cornerIndices;
         this.wallInner = wallInner;
         this.wallOuter = wallOuter;
+        Set<Long> cells = new HashSet<>();
+        for (long p : wallInner) {
+            cells.add(p);
+        }
+        for (long p : wallOuter) {
+            cells.add(p);
+        }
+        this.wallCells = cells;
+        this.towerCenters = towerCenters;
         this.streetBoxes = streetBoxes;
         this.outerNodes = outerNodes;
     }
@@ -100,6 +116,20 @@ public final class VillageContour {
         return wallOuter;
     }
 
+    public boolean hasWall() {
+        return !wallCells.isEmpty();
+    }
+
+    /** Whether (x, z) is a wall course cell (either course). */
+    public boolean isWallCell(int x, int z) {
+        return wallCells.contains(pack(x, z));
+    }
+
+    /** Tier-2 guard tower centers (y unused); empty for other tiers. */
+    public List<BlockPos> towerCenters() {
+        return towerCenters;
+    }
+
     public int[] cornerIndices() {
         return cornerIndices;
     }
@@ -120,7 +150,7 @@ public final class VillageContour {
         return (int) (packed >> 32);
     }
 
-    private static long pack(int x, int z) {
+    public static long pack(int x, int z) {
         return (x & 0xFFFFFFFFL) | ((long) z << 32);
     }
 
@@ -135,8 +165,9 @@ public final class VillageContour {
      * @param wrapMargin distance (blocks) between the wrap road centerline and
      *                   the building walls; larger values give a roomier ring.
      * @param tier       city tier; TIER2 additionally gets the wall bands.
+     * @param worldSeed  for the deterministic tower count/placement roll.
      */
-    public static VillageContour of(StructureStart start, int wrapMargin, VillageTier tier) {
+    public static VillageContour of(StructureStart start, int wrapMargin, VillageTier tier, long worldSeed) {
         BoundingBox bounds = start.getBoundingBox();
         BlockPos center = bounds.getCenter();
         // Room for the closing, the margin, and (tier 2) the wall band that
@@ -183,7 +214,7 @@ public final class VillageContour {
         List<long[]> boundary = traceLargestBoundary(interior, w, h);
         if (boundary.isEmpty()) {
             return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
-                    new long[0], new int[0], new long[0], new long[0],
+                    new long[0], new int[0], new long[0], new long[0], List.of(),
                     List.copyOf(streets), List.of());
         }
 
@@ -258,9 +289,65 @@ public final class VillageContour {
             outer = new ArrayList<>(outer.subList(0, 6));
         }
 
+        // 8. Tier-2 guard towers: 1-3 evenly spaced spots on the wall
+        //    centerline, slid away from outer nodes (where gates cut through).
+        List<BlockPos> towers = tier == VillageTier.TIER2 && wallInner.length > 0
+                ? placeTowers(worldSeed, start.getChunkPos().pack(), loop, outer, center)
+                : List.of();
+
         return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
-                loop, cornerIndices, wallInner, wallOuter,
+                loop, cornerIndices, wallInner, wallOuter, towers,
                 List.copyOf(streets), List.copyOf(outer));
+    }
+
+    /** Deterministic tower spots: count and phase from the seed, gate-avoiding. */
+    private static List<BlockPos> placeTowers(long worldSeed, long startChunkPacked, long[] loop,
+            List<BlockPos> outerNodes, BlockPos center) {
+        if (loop.length < 40) {
+            return List.of();
+        }
+        Random random = new Random(worldSeed ^ startChunkPacked * 0xD6E8FEB86659FD93L);
+        int count = 1 + random.nextInt(3);
+        int base = random.nextInt(loop.length);
+        List<BlockPos> towers = new ArrayList<>();
+        for (int t = 0; t < count; t++) {
+            int idx = Math.floorMod(base + t * loop.length / count, loop.length);
+            for (int attempt = 0; attempt < loop.length; attempt += 4) {
+                int i = (idx + attempt) % loop.length;
+                int x = pointX(loop[i]);
+                int z = pointZ(loop[i]);
+                if (nearAny(x, z, outerNodes, 12) || nearAny(x, z, towers, 18)) {
+                    continue; // gates cut near outer nodes; towers keep clear
+                }
+                // Outward normal from the smoothed loop tangent (as the
+                // corner lamps do), pushed to the wall centerline.
+                int before = Math.floorMod(i - 3, loop.length);
+                int after = (i + 3) % loop.length;
+                double tx = pointX(loop[after]) - pointX(loop[before]);
+                double tz = pointZ(loop[after]) - pointZ(loop[before]);
+                double len = Math.max(1.0, Math.hypot(tx, tz));
+                double nx = -tz / len;
+                double nz = tx / len;
+                if (nx * (x - center.getX()) + nz * (z - center.getZ()) < 0) {
+                    nx = -nx;
+                    nz = -nz;
+                }
+                towers.add(new BlockPos((int) Math.round(x + nx * 4.5), 0, (int) Math.round(z + nz * 4.5)));
+                break;
+            }
+        }
+        return List.copyOf(towers);
+    }
+
+    private static boolean nearAny(int x, int z, List<BlockPos> points, int distance) {
+        for (BlockPos p : points) {
+            int dx = p.getX() - x;
+            int dz = p.getZ() - z;
+            if (dx * dx + dz * dz < distance * distance) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

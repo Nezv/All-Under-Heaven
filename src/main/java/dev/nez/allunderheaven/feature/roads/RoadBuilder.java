@@ -1,6 +1,7 @@
 package dev.nez.allunderheaven.feature.roads;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -88,9 +89,12 @@ public final class RoadBuilder {
 
         List<VillageContour> villages = resolveLocalVillages(region, serverLevel, pos, planner);
         Set<Long> stamped = new HashSet<>();
+        Map<Long, int[]> gates = new HashMap<>();
         Tally tally = new Tally();
 
         // (a) Inter-village roads (with wrap clipping + outer-node connectors).
+        // Wall cells crossed by a road centerline are collected as gate cells
+        // along the way, so the wall pass can arch over instead of sealing.
         for (int i = 0; i < nodes.size(); i++) {
             for (int j = i + 1; j < nodes.size(); j++) {
                 VillageNode a = nodes.get(i);
@@ -99,8 +103,8 @@ public final class RoadBuilder {
                     continue;
                 }
                 planner.path(a, b).ifPresent(path -> {
-                    if (path.bounds().grow(4).intersects(minBlockX, minBlockZ, maxBlockX, maxBlockZ)) {
-                        stampPath(region, serverLevel, path, villages,
+                    if (path.bounds().grow(8).intersects(minBlockX, minBlockZ, maxBlockX, maxBlockZ)) {
+                        stampPath(region, serverLevel, path, villages, gates,
                                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
                     }
                 });
@@ -121,9 +125,12 @@ public final class RoadBuilder {
             }
         }
 
-        // (d) Tier-2 towns: the city wall around the wrap.
+        // (d) Tier-2 towns: the city wall around the wrap (with gate arches
+        // where roads cross), plus the guard towers.
         for (VillageContour village : villages) {
-            tally.wallBlocks += WallBuilder.stampWalls(region, village,
+            tally.wallBlocks += WallBuilder.stampWalls(region, serverLevel, village, gates,
+                    minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+            tally.wallBlocks += WallBuilder.stampTowers(region, serverLevel, village,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ);
         }
 
@@ -187,13 +194,14 @@ public final class RoadBuilder {
                                 ? VillageTier.of(serverLevel.getSeed(), start.getChunkPos())
                                 : VillageTier.TIER1;
                         VillageContour contour = VillageContour.of(start,
-                                Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt(), tier);
+                                Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt(), tier, serverLevel.getSeed());
                         if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
                             AllUnderHeaven.LOGGER.info(
-                                    "[All Under Heaven] Roads debug: wrap for {} village at {} — {} loop points, {} corners, {} outer nodes, {} wall cells",
+                                    "[All Under Heaven] Roads debug: wrap for {} village at {} — {} loop points, {} corners, {} outer nodes, {} wall cells, {} towers",
                                     tier, contour.center(), contour.loopPoints().length,
                                     contour.cornerIndices().length, contour.outerNodes().size(),
-                                    contour.wallInner().length + contour.wallOuter().length);
+                                    contour.wallInner().length + contour.wallOuter().length,
+                                    contour.towerCenters().size());
                         }
                         return contour;
                     }));
@@ -204,7 +212,7 @@ public final class RoadBuilder {
     }
 
     private static void stampPath(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
-            List<VillageContour> villages,
+            List<VillageContour> villages, Map<Long, int[]> gates,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         int n = path.sampleCount();
         for (int i = 1; i < n; i++) {
@@ -214,10 +222,14 @@ public final class RoadBuilder {
                 double f = (double) s / steps;
                 int x = (int) Math.round(path.xs()[i - 1] + (path.xs()[i] - path.xs()[i - 1]) * f);
                 int z = (int) Math.round(path.zs()[i - 1] + (path.zs()[i] - path.zs()[i - 1]) * f);
-                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                if (x + 2 < minBlockX || x - 2 > maxBlockX || z + 2 < minBlockZ || z - 2 > maxBlockZ) {
                     continue;
                 }
                 int y = Math.round(path.ys()[i - 1] + (path.ys()[i] - path.ys()[i - 1]) * (float) f);
+                collectGateCells(villages, gates, x, y, z);
+                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                    continue;
+                }
                 boolean wet = path.wet()[i - 1] || path.wet()[i];
                 stampCell3Wide(region, x, y, z, wet, villages, null,
                         minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
@@ -231,10 +243,34 @@ public final class RoadBuilder {
         }
         // Re-anchor each end of the road onto the village's natural outer
         // street end (the blue-to-contour derivation).
-        stampConnector(region, serverLevel, path, villages, true,
+        stampConnector(region, serverLevel, path, villages, gates, true,
                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
-        stampConnector(region, serverLevel, path, villages, false,
+        stampConnector(region, serverLevel, path, villages, gates, false,
                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+    }
+
+    /**
+     * Where a road centerline sample passes within 2 blocks of a tier-2 wall
+     * cell, mark that cell as a gate cell: {distance from the centerline,
+     * road surface Y}. The road is 3 wide, so distance 0-1 lies over the road
+     * itself and 2 is the one-block padding — a 5-wide opening in total,
+     * matching the arch profile in {@link WallBuilder}.
+     */
+    private static void collectGateCells(List<VillageContour> villages, Map<Long, int[]> gates, int x, int y, int z) {
+        for (VillageContour village : villages) {
+            if (!village.hasWall()) {
+                continue;
+            }
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    if (village.isWallCell(x + dx, z + dz)) {
+                        int dist = Math.max(Math.abs(dx), Math.abs(dz));
+                        gates.merge(VillageContour.pack(x + dx, z + dz), new int[]{dist, y},
+                                (a, b) -> b[0] < a[0] ? b : a);
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -243,7 +279,7 @@ public final class RoadBuilder {
      * Deterministic: depends only on the path and the village geometry.
      */
     private static void stampConnector(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
-            List<VillageContour> villages, boolean fromStart,
+            List<VillageContour> villages, Map<Long, int[]> gates, boolean fromStart,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         int n = path.sampleCount();
         int endX = fromStart ? path.xs()[0] : path.xs()[n - 1];
@@ -302,10 +338,14 @@ public final class RoadBuilder {
         for (int s = 0; s <= steps; s++) {
             int x = (int) Math.round(exitX + (best.getX() - exitX) * (double) s / steps);
             int z = (int) Math.round(exitZ + (best.getZ() - exitZ) * (double) s / steps);
-            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+            if (x + 2 < minBlockX || x - 2 > maxBlockX || z + 2 < minBlockZ || z - 2 > maxBlockZ) {
                 continue;
             }
             int y = terrainHeight(serverLevel, x, z);
+            collectGateCells(villages, gates, x, y, z);
+            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                continue;
+            }
             stampCell3Wide(region, x, y, z, false, null, palette,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
@@ -431,7 +471,9 @@ public final class RoadBuilder {
             return;
         }
         RoadPalette palette = forcedPalette != null ? forcedPalette : RoadPalettes.at(region, top);
-        for (int dy = 1; dy <= 3; dy++) {
+        // 4 blocks of headroom: where the road cuts into a hillside this is
+        // the height of the opening it carves.
+        for (int dy = 1; dy <= 4; dy++) {
             BlockPos above = top.above(dy);
             if (!region.getBlockState(above).isAir()) {
                 region.setBlock(above, AIR, 2);
@@ -473,7 +515,7 @@ public final class RoadBuilder {
      * available for any position, and immune to trees placed earlier in the
      * decoration pipeline.
      */
-    private static int terrainHeight(ServerLevel serverLevel, int x, int z) {
+    static int terrainHeight(ServerLevel serverLevel, int x, int z) {
         ChunkGenerator generator = serverLevel.getChunkSource().getGenerator();
         RandomState randomState = serverLevel.getChunkSource().randomState();
         return generator.getFirstOccupiedHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, serverLevel, randomState);

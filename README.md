@@ -33,8 +33,16 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   incoming connectors all switch to a worn stone-brick/cobble/andesite mix)
   and a medieval city wall: two courses thick, ~2 blocks outside the wrap
   road, 4 blocks tall on a cobblestone plinth with a chiseled cornice and
-  alternating merlons on the outer face. Gates are a later feature — roads
-  crossing the wall are currently sealed over.
+  alternating merlons on the outer face. Where a road crosses the wall line
+  a **gate arch** opens instead — a 5-wide passage (road + 1 block of padding,
+  4 high over the roadway, 3 at the edges) with the wall rising over it in an
+  arc. Each town also raises 1–3 **guard towers** (seed-rolled, evenly spaced
+  along the wall, kept clear of gates): diameter-5 cylinders straddling the
+  wall, 6 high with a merlon crown, hollow inside with a spiral stair up to
+  the deck and a doorway facing the town. Wall columns standing in water or
+  over a ravine are skipped (the wall breaks cleanly at rivers and canyon
+  rims), while roads crossing a ravine keep their grade and bridge across.
+  Roads cutting through a hillside now carve a 4-block-tall opening.
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).
