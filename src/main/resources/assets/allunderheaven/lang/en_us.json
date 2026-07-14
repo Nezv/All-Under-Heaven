@@ -24,5 +24,6 @@
   "allunderheaven.configuration.maxRoadsPerVillage": "Max Roads Per Village",
   "allunderheaven.configuration.roadMaxLengthBlocks": "Max Road Length (Blocks)",
   "allunderheaven.configuration.roadLamps": "Road Lamp Posts",
+  "allunderheaven.configuration.enableCityTiers": "City Tiers (Walled Towns)",
   "allunderheaven.configuration.roadsDebugLog": "Roads Debug Logging"
 }

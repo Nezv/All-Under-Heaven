@@ -25,6 +25,16 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   village gets its nearest-neighbor road, extra links only between mutual
   k-nearest neighbors (`maxRoadsPerVillage`), further pruned by the
   triangle-bias rule (skip A–C when |AB|+|BC| < |AC|+s, s configurable).
+- **City Tiers & Walls** (`feature/villages/VillageTier`, `feature/roads/WallBuilder`)
+  — every village rolls a deterministic tier from the world seed: 5 in 10 stay
+  plain villages (tier 1), 4 in 10 are walled towns (tier 2), 1 in 10 is
+  reserved as a future city (tier 3, stub — currently unmodified). Tier-2
+  towns get stone streets (their vanilla dirt paths, the wrap road and the
+  incoming connectors all switch to a worn stone-brick/cobble/andesite mix)
+  and a medieval city wall: two courses thick, ~2 blocks outside the wrap
+  road, 4 blocks tall on a cobblestone plinth with a chiseled cornice and
+  alternating merlons on the outer face. Gates are a later feature — roads
+  crossing the wall are currently sealed over.
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).

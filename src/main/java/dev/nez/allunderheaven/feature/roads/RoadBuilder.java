@@ -12,6 +12,7 @@ import dev.nez.allunderheaven.AllUnderHeaven;
 import dev.nez.allunderheaven.Config;
 import dev.nez.allunderheaven.feature.roads.RoadPalettes.RoadPalette;
 import dev.nez.allunderheaven.feature.roads.RoadPlanner.VillageNode;
+import dev.nez.allunderheaven.feature.villages.VillageTier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
@@ -24,6 +25,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 
 /**
@@ -40,6 +42,7 @@ import net.minecraft.world.level.levelgen.structure.StructureStart;
 public final class RoadBuilder {
     public static final AtomicLong ROAD_BLOCKS_PLACED = new AtomicLong();
     public static final AtomicLong LAMPS_PLACED = new AtomicLong();
+    public static final AtomicLong WALL_BLOCKS_PLACED = new AtomicLong();
 
     /** Max bearing difference (radians) for re-anchoring a road onto an outer street end. */
     private static final double CONNECTOR_MAX_BEARING = Math.toRadians(75);
@@ -55,6 +58,7 @@ public final class RoadBuilder {
     private static final class Tally {
         long roadBlocks;
         long lamps;
+        long wallBlocks;
     }
 
     private RoadBuilder() {
@@ -103,20 +107,65 @@ public final class RoadBuilder {
             }
         }
 
-        // (b) The building-hugging wrap of each nearby village.
+        // (b) The building-hugging wrap of each nearby village. Must run
+        // before the tier-2 street stoning: the wrap yields to vanilla
+        // streets by detecting their dirt-path surface.
         for (VillageContour village : villages) {
             stampWrap(region, serverLevel, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
 
+        // (c) Tier-2 towns: vanilla dirt-path streets become stone.
+        for (VillageContour village : villages) {
+            if (village.tier() == VillageTier.TIER2) {
+                stoneStreets(region, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, tally);
+            }
+        }
+
+        // (d) Tier-2 towns: the city wall around the wrap.
+        for (VillageContour village : villages) {
+            tally.wallBlocks += WallBuilder.stampWalls(region, village,
+                    minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+        }
+
         ROAD_BLOCKS_PLACED.addAndGet(tally.roadBlocks);
         LAMPS_PLACED.addAndGet(tally.lamps);
+        WALL_BLOCKS_PLACED.addAndGet(tally.wallBlocks);
         return tally.roadBlocks;
+    }
+
+    /**
+     * Replaces the vanilla street surface (dirt path) with the stone-city mix
+     * inside a tier-2 town's structure bounds. Runs after the wrap stamping so
+     * street detection still sees the original paths.
+     */
+    private static void stoneStreets(WorldGenLevel region, VillageContour village,
+            int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Tally tally) {
+        BoundingBox bounds = village.structureBounds();
+        int x0 = Math.max(bounds.minX() - 4, minBlockX);
+        int x1 = Math.min(bounds.maxX() + 4, maxBlockX);
+        int z0 = Math.max(bounds.minZ() - 4, minBlockZ);
+        int z1 = Math.min(bounds.maxZ() + 4, maxBlockZ);
+        for (int x = x0; x <= x1; x++) {
+            for (int z = z0; z <= z1; z++) {
+                int y = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                BlockPos pos = new BlockPos(x, y, z);
+                if (region.getBlockState(pos).is(Blocks.DIRT_PATH)) {
+                    region.setBlock(pos, RoadPalettes.stoneSurfaceAt(x, z), 2);
+                    tally.roadBlocks++;
+                }
+            }
+        }
     }
 
     /**
      * Villages whose structure starts are referenced around this chunk. Uses
      * the region-scoped structure manager during worldgen — the exact lookup
      * vanilla uses to place structure pieces, guaranteed non-generating.
+     *
+     * <p>Scans the 3x3 chunk neighborhood: structure references only exist
+     * for chunks the structure's bounding box intersects, but the tier-2 wall
+     * band can poke a few blocks past that box into an unreferenced chunk —
+     * whose neighbor toward the village always holds the reference.
      */
     private static List<VillageContour> resolveLocalVillages(WorldGenLevel region, ServerLevel serverLevel,
             ChunkPos pos, RoadPlanner planner) {
@@ -124,18 +173,31 @@ public final class RoadBuilder {
                 ? serverLevel.structureManager().forWorldGenRegion(worldGenRegion)
                 : serverLevel.structureManager();
         List<VillageContour> villages = new ArrayList<>();
-        for (StructureStart start : structureManager.startsForStructure(pos, planner.villageStructures()::contains)) {
-            if (start.isValid()) {
-                villages.add(VILLAGE_CACHE.computeIfAbsent(start.getChunkPos().pack(), key -> {
-                    VillageContour contour = VillageContour.of(start, Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt());
-                    if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
-                        AllUnderHeaven.LOGGER.info(
-                                "[All Under Heaven] Roads debug: wrap for village at {} — {} loop points, {} corners, {} outer nodes",
-                                contour.center(), contour.loopPoints().length,
-                                contour.cornerIndices().length, contour.outerNodes().size());
+        Set<Long> seen = new HashSet<>();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                ChunkPos probe = new ChunkPos(pos.x() + dx, pos.z() + dz);
+                for (StructureStart start : structureManager.startsForStructure(probe,
+                        planner.villageStructures()::contains)) {
+                    if (!start.isValid() || !seen.add(start.getChunkPos().pack())) {
+                        continue;
                     }
-                    return contour;
-                }));
+                    villages.add(VILLAGE_CACHE.computeIfAbsent(start.getChunkPos().pack(), key -> {
+                        VillageTier tier = Config.ENABLE_CITY_TIERS.getAsBoolean()
+                                ? VillageTier.of(serverLevel.getSeed(), start.getChunkPos())
+                                : VillageTier.TIER1;
+                        VillageContour contour = VillageContour.of(start,
+                                Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt(), tier);
+                        if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
+                            AllUnderHeaven.LOGGER.info(
+                                    "[All Under Heaven] Roads debug: wrap for {} village at {} — {} loop points, {} corners, {} outer nodes, {} wall cells",
+                                    tier, contour.center(), contour.loopPoints().length,
+                                    contour.cornerIndices().length, contour.outerNodes().size(),
+                                    contour.wallInner().length + contour.wallOuter().length);
+                        }
+                        return contour;
+                    }));
+                }
             }
         }
         return villages;
@@ -157,7 +219,7 @@ public final class RoadBuilder {
                 }
                 int y = Math.round(path.ys()[i - 1] + (path.ys()[i] - path.ys()[i - 1]) * (float) f);
                 boolean wet = path.wet()[i - 1] || path.wet()[i];
-                stampCell3Wide(region, x, y, z, wet, villages,
+                stampCell3Wide(region, x, y, z, wet, villages, null,
                         minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
             }
         }
@@ -236,6 +298,7 @@ public final class RoadBuilder {
         if (steps < 3) {
             return; // the road already arrives at the street end
         }
+        RoadPalette palette = village.tier() == VillageTier.TIER2 ? RoadPalettes.STONE_CITY : null;
         for (int s = 0; s <= steps; s++) {
             int x = (int) Math.round(exitX + (best.getX() - exitX) * (double) s / steps);
             int z = (int) Math.round(exitZ + (best.getZ() - exitZ) * (double) s / steps);
@@ -243,7 +306,7 @@ public final class RoadBuilder {
                 continue;
             }
             int y = terrainHeight(serverLevel, x, z);
-            stampCell3Wide(region, x, y, z, false, null,
+            stampCell3Wide(region, x, y, z, false, null, palette,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
     }
@@ -257,6 +320,7 @@ public final class RoadBuilder {
     private static void stampWrap(WorldGenLevel region, ServerLevel serverLevel, VillageContour village,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         long[] loop = village.loopPoints();
+        RoadPalette palette = village.tier() == VillageTier.TIER2 ? RoadPalettes.STONE_CITY : null;
         for (int i = 0; i < loop.length; i++) {
             int x = VillageContour.pointX(loop[i]);
             int z = VillageContour.pointZ(loop[i]);
@@ -267,7 +331,7 @@ public final class RoadBuilder {
                 continue; // the vanilla street carries the wrap here
             }
             int y = terrainHeight(serverLevel, x, z);
-            stampCell3Wide(region, x, y, z, false, null,
+            stampCell3Wide(region, x, y, z, false, null, palette,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
 
@@ -309,7 +373,7 @@ public final class RoadBuilder {
      * (checked per block in {@link #placeRoadColumn}).
      */
     private static void stampCell3Wide(WorldGenLevel region, int x, int plannedY, int z, boolean wet,
-            List<VillageContour> interiorClip,
+            List<VillageContour> interiorClip, RoadPalette forcedPalette,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
@@ -325,7 +389,7 @@ public final class RoadBuilder {
                 if (interiorClip != null && insideAnyVillage(bx, bz, interiorClip)) {
                     continue;
                 }
-                placeRoadColumn(region, bx, plannedY, bz, wet, tally);
+                placeRoadColumn(region, bx, plannedY, bz, wet, forcedPalette, tally);
             }
         }
     }
@@ -357,7 +421,8 @@ public final class RoadBuilder {
         return pathBlocks >= 6;
     }
 
-    private static void placeRoadColumn(WorldGenLevel region, int x, int y, int z, boolean wet, Tally tally) {
+    private static void placeRoadColumn(WorldGenLevel region, int x, int y, int z, boolean wet,
+            RoadPalette forcedPalette, Tally tally) {
         BlockPos top = new BlockPos(x, y, z);
         // Never overwrite existing street/road surface — vanilla streets keep
         // their blocks, and junctions merge instead of stacking.
@@ -365,7 +430,7 @@ public final class RoadBuilder {
         if (region.getBlockState(new BlockPos(x, surfaceY, z)).is(Blocks.DIRT_PATH)) {
             return;
         }
-        RoadPalette palette = RoadPalettes.at(region, top);
+        RoadPalette palette = forcedPalette != null ? forcedPalette : RoadPalettes.at(region, top);
         for (int dy = 1; dy <= 3; dy++) {
             BlockPos above = top.above(dy);
             if (!region.getBlockState(above).isAir()) {

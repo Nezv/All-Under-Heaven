@@ -76,21 +76,24 @@ public final class RoadsDebug {
                     for (int s = 0; s < path.sampleCount(); s += 8) {
                         overworld.getChunk(path.xs()[s] >> 4, path.zs()[s] >> 4);
                     }
-                    // Also generate the full area around village A so its hull
-                    // road and corner lamps materialize completely.
-                    int centerChunkX = a.center().getX() >> 4;
-                    int centerChunkZ = a.center().getZ() >> 4;
-                    for (int dx = -3; dx <= 3; dx++) {
-                        for (int dz = -3; dz <= 3; dz++) {
-                            overworld.getChunk(centerChunkX + dx, centerChunkZ + dz);
+                    // Also generate the full area around both endpoint villages
+                    // so their wraps, walls and corner lamps materialize completely.
+                    for (VillageNode endpoint : List.of(a, b)) {
+                        int centerChunkX = endpoint.center().getX() >> 4;
+                        int centerChunkZ = endpoint.center().getZ() >> 4;
+                        for (int dx = -3; dx <= 3; dx++) {
+                            for (int dz = -3; dz <= 3; dz++) {
+                                overworld.getChunk(centerChunkX + dx, centerChunkZ + dz);
+                            }
                         }
                     }
                 });
                 break outer;
             }
         }
-        AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: after corridor generation — {} road blocks, {} lamps placed",
-                RoadBuilder.ROAD_BLOCKS_PLACED.get(), RoadBuilder.LAMPS_PLACED.get());
+        AllUnderHeaven.LOGGER.info("[All Under Heaven] Roads debug: after corridor generation — {} road blocks, {} lamps, {} wall blocks placed",
+                RoadBuilder.ROAD_BLOCKS_PLACED.get(), RoadBuilder.LAMPS_PLACED.get(),
+                RoadBuilder.WALL_BLOCKS_PLACED.get());
     }
 
     @SubscribeEvent

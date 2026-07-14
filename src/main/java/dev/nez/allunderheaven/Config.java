@@ -48,7 +48,9 @@ public class Config {
     public static final ModConfigSpec.IntValue ROAD_WRAP_MARGIN_BLOCKS = BUILDER
             .comment("How far the village wrap road sits from the building walls (blocks, centerline).",
                     "The road is 3 wide, so its inner edge ends up about (this - 1) blocks off the walls.",
-                    "Larger = roomier ring around the village; only affects chunks generated afterwards.")
+                    "Larger = roomier ring around the village; only affects chunks generated afterwards.",
+                    "Values below 3 let the straightened loop (and a tier-2 town's wall, which derives",
+                    "from it) cut corners tight enough to brush building walls.")
             .defineInRange("roadWrapMarginBlocks", 4, 1, 16);
 
     public static final ModConfigSpec.IntValue ROAD_TRIANGLE_SLACK_BLOCKS = BUILDER
@@ -68,6 +70,13 @@ public class Config {
     public static final ModConfigSpec.BooleanValue ROAD_LAMPS = BUILDER
             .comment("Place lamp posts along roads every 10-20 blocks.")
             .define("roadLamps", true);
+
+    public static final ModConfigSpec.BooleanValue ENABLE_CITY_TIERS = BUILDER
+            .comment("Assign a city tier to every village (deterministic from the world seed):",
+                    "5 in 10 stay plain villages (tier 1), 4 in 10 become walled towns with stone",
+                    "streets and a stone wall around the road contour (tier 2), 1 in 10 is reserved",
+                    "as a future city (tier 3, currently unmodified). Only affects new chunks.")
+            .define("enableCityTiers", true);
 
     public static final ModConfigSpec.BooleanValue ROADS_DEBUG_LOG = BUILDER
             .comment("Log the road network summary around spawn on server start (development aid).")

@@ -54,6 +54,17 @@ public final class RoadPalettes {
             Blocks.DIRT.defaultBlockState(),
             Blocks.SPRUCE_FENCE.defaultBlockState());
 
+    /**
+     * Tier-2 walled towns: stone streets regardless of biome. The surface is
+     * the four-way mix from {@link #stoneSurfaceAt} (see {@code surfaceAt}).
+     */
+    public static final RoadPalette STONE_CITY = new RoadPalette(
+            Blocks.STONE_BRICKS.defaultBlockState(),
+            Blocks.COBBLESTONE.defaultBlockState(),
+            Blocks.COBBLESTONE.defaultBlockState(),
+            Blocks.COBBLESTONE.defaultBlockState(),
+            Blocks.STONE_BRICK_WALL.defaultBlockState());
+
     private RoadPalettes() {
     }
 
@@ -79,8 +90,28 @@ public final class RoadPalettes {
         if (wet) {
             return palette.wetSurface();
         }
+        if (palette == STONE_CITY) {
+            return stoneSurfaceAt(x, z);
+        }
         long hash = x * 341873128712L + z * 132897987541L;
         hash = hash * 0x27D4EB2F165667C5L + 0x9E3779B97F4A7C15L;
         return Math.floorMod(hash >> 17, 100) < 22 ? palette.accent() : palette.surface();
+    }
+
+    /** Deterministic stone street surface: worn mix of bricks, cobble and andesite. */
+    public static BlockState stoneSurfaceAt(int x, int z) {
+        long hash = x * 341873128712L + z * 132897987541L;
+        hash = hash * 0x27D4EB2F165667C5L + 0x9E3779B97F4A7C15L;
+        int roll = (int) Math.floorMod(hash >> 17, 100);
+        if (roll < 40) {
+            return Blocks.STONE_BRICKS.defaultBlockState();
+        }
+        if (roll < 65) {
+            return Blocks.COBBLESTONE.defaultBlockState();
+        }
+        if (roll < 85) {
+            return Blocks.ANDESITE.defaultBlockState();
+        }
+        return Blocks.CRACKED_STONE_BRICKS.defaultBlockState();
     }
 }

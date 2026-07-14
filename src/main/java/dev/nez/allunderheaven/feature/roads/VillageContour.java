@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.nez.allunderheaven.feature.villages.VillageTier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
@@ -29,8 +30,14 @@ public final class VillageContour {
     private static final double SIMPLIFY_TOLERANCE = 2.5;
     /** Building pieces smaller than this (either axis) are decor and ignored. */
     private static final int MIN_BUILDING_SIZE = 3;
+    /** Ground (blocks) between the wrap road's outer edge and the wall's inner face. */
+    private static final int WALL_GAP = 2;
+    /** Wrap road half-width: the road spans centerline ± this. */
+    private static final int ROAD_HALF_WIDTH = 1;
 
     private final BlockPos center;
+    private final VillageTier tier;
+    private final BoundingBox structureBounds;
     private final int gridMinX;
     private final int gridMinZ;
     private final int gridW;
@@ -40,13 +47,20 @@ public final class VillageContour {
     private final long[] loopPoints;
     /** Indices into loopPoints marking the simplified polygon's corners. */
     private final int[] cornerIndices;
+    /** Tier-2 wall courses (packed block coords): inner ring and outer ring. */
+    private final long[] wallInner;
+    private final long[] wallOuter;
     private final List<BoundingBox> streetBoxes;
     private final List<BlockPos> outerNodes;
 
-    private VillageContour(BlockPos center, int gridMinX, int gridMinZ, int gridW, int gridH,
+    private VillageContour(BlockPos center, VillageTier tier, BoundingBox structureBounds,
+            int gridMinX, int gridMinZ, int gridW, int gridH,
             boolean[] interior, long[] loopPoints, int[] cornerIndices,
+            long[] wallInner, long[] wallOuter,
             List<BoundingBox> streetBoxes, List<BlockPos> outerNodes) {
         this.center = center;
+        this.tier = tier;
+        this.structureBounds = structureBounds;
         this.gridMinX = gridMinX;
         this.gridMinZ = gridMinZ;
         this.gridW = gridW;
@@ -54,6 +68,8 @@ public final class VillageContour {
         this.interior = interior;
         this.loopPoints = loopPoints;
         this.cornerIndices = cornerIndices;
+        this.wallInner = wallInner;
+        this.wallOuter = wallOuter;
         this.streetBoxes = streetBoxes;
         this.outerNodes = outerNodes;
     }
@@ -62,8 +78,26 @@ public final class VillageContour {
         return center;
     }
 
+    public VillageTier tier() {
+        return tier;
+    }
+
+    public BoundingBox structureBounds() {
+        return structureBounds;
+    }
+
     public long[] loopPoints() {
         return loopPoints;
+    }
+
+    /** Tier-2 wall, inner course (packed block coords); empty for other tiers. */
+    public long[] wallInner() {
+        return wallInner;
+    }
+
+    /** Tier-2 wall, outer course (packed block coords); empty for other tiers. */
+    public long[] wallOuter() {
+        return wallOuter;
     }
 
     public int[] cornerIndices() {
@@ -100,11 +134,14 @@ public final class VillageContour {
     /**
      * @param wrapMargin distance (blocks) between the wrap road centerline and
      *                   the building walls; larger values give a roomier ring.
+     * @param tier       city tier; TIER2 additionally gets the wall bands.
      */
-    public static VillageContour of(StructureStart start, int wrapMargin) {
+    public static VillageContour of(StructureStart start, int wrapMargin, VillageTier tier) {
         BoundingBox bounds = start.getBoundingBox();
         BlockPos center = bounds.getCenter();
-        int pad = GAP_BRIDGE + wrapMargin + 4;
+        // Room for the closing, the margin, and (tier 2) the wall band that
+        // sits up to ~5 blocks outside the loop, plus simplification drift.
+        int pad = GAP_BRIDGE + wrapMargin + 12;
         int minX = bounds.minX() - pad;
         int minZ = bounds.minZ() - pad;
         int w = bounds.maxX() - bounds.minX() + 1 + 2 * pad;
@@ -145,8 +182,9 @@ public final class VillageContour {
         // 3. Trace the boundary of the largest connected region.
         List<long[]> boundary = traceLargestBoundary(interior, w, h);
         if (boundary.isEmpty()) {
-            return new VillageContour(center, minX, minZ, w, h, interior,
-                    new long[0], new int[0], List.copyOf(streets), List.of());
+            return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
+                    new long[0], new int[0], new long[0], new long[0],
+                    List.copyOf(streets), List.of());
         }
 
         // 4. Straighten with Douglas-Peucker (closed loop: two half-arcs).
@@ -179,7 +217,32 @@ public final class VillageContour {
         int[] cornerIndices = corners.stream().mapToInt(Integer::intValue)
                 .filter(i -> i < loop.length).toArray();
 
-        // 6. Natural outer nodes: street tips that reach beyond the wrap.
+        // 6. Tier-2 city wall: two 1-block courses concentric with the ACTUAL
+        //    wrap road (the rasterized loop), not the raw traced boundary the
+        //    simplification drifted from. The loop polygon is filled, then the
+        //    courses are the cells at Chebyshev distance (road edge + gap + 1)
+        //    and (road edge + gap + 2) from it.
+        long[] wallInner = new long[0];
+        long[] wallOuter = new long[0];
+        if (tier == VillageTier.TIER2 && loop.length > 0) {
+            boolean[] roadMask = new boolean[w * h];
+            for (long p : loop) {
+                int gx = pointX(p) - minX;
+                int gz = pointZ(p) - minZ;
+                if (gx >= 0 && gz >= 0 && gx < w && gz < h) {
+                    roadMask[gz * w + gx] = true;
+                }
+            }
+            boolean[] fill = fillLoop(roadMask, w, h);
+            int gapEdge = ROAD_HALF_WIDTH + WALL_GAP;
+            boolean[] toGap = dilate(fill, w, h, gapEdge);
+            boolean[] toInner = dilate(fill, w, h, gapEdge + 1);
+            boolean[] toOuter = dilate(fill, w, h, gapEdge + 2);
+            wallInner = bandToPoints(toInner, toGap, w, h, minX, minZ);
+            wallOuter = bandToPoints(toOuter, toInner, w, h, minX, minZ);
+        }
+
+        // 7. Natural outer nodes: street tips that reach beyond the wrap.
         List<BlockPos> outer = new ArrayList<>();
         for (BoundingBox street : streets) {
             BlockPos tip = farEdgeCenter(street, center);
@@ -195,8 +258,75 @@ public final class VillageContour {
             outer = new ArrayList<>(outer.subList(0, 6));
         }
 
-        return new VillageContour(center, minX, minZ, w, h, interior,
-                loop, cornerIndices, List.copyOf(streets), List.copyOf(outer));
+        return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
+                loop, cornerIndices, wallInner, wallOuter,
+                List.copyOf(streets), List.copyOf(outer));
+    }
+
+    /**
+     * The loop cells plus everything they enclose. Outside is flood-filled
+     * from the grid border with 4-connectivity — an 8-connected closed curve
+     * (which line rasterization produces) cannot be leaked through
+     * 4-connectedly, so the interior stays sealed.
+     */
+    private static boolean[] fillLoop(boolean[] loopMask, int w, int h) {
+        boolean[] outside = new boolean[w * h];
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        for (int x = 0; x < w; x++) {
+            enqueueOutside(loopMask, outside, queue, x);
+            enqueueOutside(loopMask, outside, queue, (h - 1) * w + x);
+        }
+        for (int z = 0; z < h; z++) {
+            enqueueOutside(loopMask, outside, queue, z * w);
+            enqueueOutside(loopMask, outside, queue, z * w + w - 1);
+        }
+        while (!queue.isEmpty()) {
+            int idx = queue.poll();
+            int x = idx % w;
+            int z = idx / w;
+            if (x > 0) {
+                enqueueOutside(loopMask, outside, queue, idx - 1);
+            }
+            if (x < w - 1) {
+                enqueueOutside(loopMask, outside, queue, idx + 1);
+            }
+            if (z > 0) {
+                enqueueOutside(loopMask, outside, queue, idx - w);
+            }
+            if (z < h - 1) {
+                enqueueOutside(loopMask, outside, queue, idx + w);
+            }
+        }
+        boolean[] fill = new boolean[w * h];
+        for (int i = 0; i < fill.length; i++) {
+            fill[i] = !outside[i];
+        }
+        return fill;
+    }
+
+    private static void enqueueOutside(boolean[] loopMask, boolean[] outside, ArrayDeque<Integer> queue, int idx) {
+        if (!loopMask[idx] && !outside[idx]) {
+            outside[idx] = true;
+            queue.add(idx);
+        }
+    }
+
+    /** Cells in {@code larger} but not {@code smaller}, as packed absolute coords. */
+    private static long[] bandToPoints(boolean[] larger, boolean[] smaller, int w, int h, int minX, int minZ) {
+        List<Long> points = new ArrayList<>();
+        for (int z = 0; z < h; z++) {
+            int row = z * w;
+            for (int x = 0; x < w; x++) {
+                if (larger[row + x] && !smaller[row + x]) {
+                    points.add(pack(x + minX, z + minZ));
+                }
+            }
+        }
+        long[] out = new long[points.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = points.get(i);
+        }
+        return out;
     }
 
     // --- morphology (square structuring element, separable) ---
