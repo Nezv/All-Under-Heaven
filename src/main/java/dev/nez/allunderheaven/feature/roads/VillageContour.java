@@ -180,10 +180,13 @@ public final class VillageContour {
     /**
      * @param wrapMargin distance (blocks) between the wrap road centerline and
      *                   the building walls; larger values give a roomier ring.
-     * @param tier       city tier; TIER2 additionally gets the wall bands.
-     * @param worldSeed  for the deterministic tower count/placement roll.
+     * @param tier         city tier; TIER2 additionally gets the wall bands.
+     * @param worldSeed    for the deterministic tower count/placement roll.
+     * @param wallsAllowed false suppresses the wall/towers even for TIER2 — used
+     *                     to keep a wall from ringing a village sitting in a lake.
      */
-    public static VillageContour of(StructureStart start, int wrapMargin, VillageTier tier, long worldSeed) {
+    public static VillageContour of(StructureStart start, int wrapMargin, VillageTier tier,
+            long worldSeed, boolean wallsAllowed) {
         BoundingBox bounds = start.getBoundingBox();
         BlockPos center = bounds.getCenter();
         // Room for the closing, the margin, and (tier 2) the wall band that
@@ -272,7 +275,7 @@ public final class VillageContour {
         long[] wallInner = new long[0];
         long[] wallOuter = new long[0];
         boolean[] wallInterior = null;
-        if (tier == VillageTier.TIER2 && loop.length > 0) {
+        if (tier == VillageTier.TIER2 && wallsAllowed && loop.length > 0) {
             boolean[] roadMask = new boolean[w * h];
             for (long p : loop) {
                 int gx = pointX(p) - minX;

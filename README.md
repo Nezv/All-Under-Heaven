@@ -33,36 +33,42 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   incoming connectors all switch to a worn stone-brick/cobble/andesite mix)
   and a medieval city wall: two courses thick, ~2 blocks outside the wrap
   road, 4 blocks tall on a cobblestone plinth with a chiseled cornice and
-  alternating merlons on the outer face. Where the wall meets water it
-  **crosses on a cobblestone causeway** — the footing sinks to the bed and the
-  body rides the water surface — so a town straddling a river or ponds keeps an
-  unbroken ring; only dry ravine rims still break the wall (roads crossing a
-  ravine keep their grade and bridge across). Where a road crosses the wall
-  line a **constant gate arch** is cut instead: each crossing is resolved to a
-  single anchor (the point on the wall line nearest the road centerline, plus
-  the road's travel direction and surface height), and a rigid 5-wide passage —
-  arcing from 3 high at the jambs to 5 at the crown, with a merloned gatehouse
-  lintel over it — is stamped relative to the road surface, identical no matter
-  which chunk generates which half. Each town also raises 1–3 **guard towers**
-  (seed-rolled, evenly spaced along the wall, kept clear of gates): rigid
-  diameter-7 cylinders stamped off a single base height (interiors force-cleared,
-  gaps below force-filled, so terrain never shifts the structure), 6 high with a
-  merlon crown and a **ladder** climbing the interior face of the town-facing
-  doorway up to the parapet. Towers over water build on a cobble pier; tower
-  centers over a ravine are skipped. Roads cutting through a hillside carve a
-  4-block-tall opening.
+  alternating merlons on the outer face, lit by **lanterns every few merlons**.
+  Where the wall meets water it becomes a **water-gate arcade** — solid piers at
+  intervals carry the wall while the spans between them leave the water (and the
+  passage above it) open, so a river flows *through* the wall instead of being
+  dammed; only dry ravine rims still break the wall (roads crossing a ravine
+  keep their grade and bridge across). Where a road crosses the wall line a
+  **constant gate arch** is cut instead: each crossing is resolved to a single
+  anchor (the point on the wall line nearest the road centerline, the surface
+  height, and the crossing axis **snapped to the nearest cardinal** so a
+  diagonal road still gets a straight, non-staircased gate), and a rigid 5-wide
+  passage — arcing from 3 high at the jambs to 5 at the crown, with a merloned
+  gatehouse lintel over it — is stamped relative to the road surface, identical
+  no matter which chunk generates which half. Each town also raises 1–3 **guard
+  towers** (seed-rolled, evenly spaced along the wall, kept clear of gates):
+  rigid diameter-7 cylinders stamped off a single base height (interiors
+  force-cleared, footings force-filled all the way down to the ground even on a
+  steep slope, so terrain never shifts or floats the structure), 6 high with a
+  merlon crown and a deck lantern. Access is a **two-stage climb**: an external
+  ladder up the town-facing pedestal to the doorway, then an interior ladder
+  from the doorway to the parapet (no stairs). Towers over water build on a
+  cobble pier; tower centers over a ravine are skipped. Roads cutting through a
+  hillside carve a 4-block-tall opening.
 - **Water integration** (`feature/roads/RoadBuilder`) — the network adapts to
-  the random rivers and ponds. A tier-2 town straddling water has the open
-  water **drained** inside its walls (filled to the water line with dirt and
-  capped with grass, so the square reads as reclaimed ground rather than a
-  flooded gap; genuinely deep pools are left alone). Roads meeting water pick a
-  treatment by span: a **short crossing becomes a stone causeway** (solid
-  cobblestone from the bed up to the deck — a tidy ford, not a dirt lip over
-  the water), while a **long crossing becomes a bridge** — a stone deck on
-  cobblestone posts with fence railings, the water flowing through underneath.
-  Which is which is decided from the deterministic per-sample water flags, so
-  every chunk agrees. (Water detection reuses the noise probe already computed
-  for road heights; nothing forces a chunk load.)
+  the random rivers and ponds. A tier-2 town **sitting mostly in water gets no
+  wall at all** (a wall ringing a lake never looks right); a town merely
+  straddling water keeps its wall and has the open water **drained** inside it
+  (filled to the water line with dirt and capped with grass, so the square reads
+  as reclaimed ground rather than a flooded gap; genuinely deep pools are left
+  alone), with the wall itself arcading over any water it crosses (above).
+  Roads meeting water pick a treatment by span: a **short crossing becomes a
+  stone causeway** (solid cobblestone from the bed up to the deck — a tidy ford,
+  not a dirt lip over the water), while a **long crossing becomes a bridge** — a
+  stone deck on cobblestone posts with fence railings, the water flowing through
+  underneath. Which is which is decided from the deterministic per-sample water
+  flags, so every chunk agrees. (Water detection reuses the noise probe already
+  computed for road heights; nothing forces a chunk load.)
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).

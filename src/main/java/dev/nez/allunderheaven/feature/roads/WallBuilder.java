@@ -65,7 +65,13 @@ public final class WallBuilder {
     /** Two gate anchors closer than this (squared) are the same crossing. */
     private static final int GATE_DEDUPE_DIST2 = 5 * 5;
 
+    /** A tower footing digs this far down to reach ground on steep terrain. */
+    private static final int TOWER_FOOTING_MAX_DROP = 48;
+    /** Height of the open water passage under a water-gate arcade span. */
+    private static final int WATER_GATE_OPENING = 2;
+
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+    private static final BlockState LANTERN = Blocks.LANTERN.defaultBlockState();
     private static final BlockState COBBLESTONE = Blocks.COBBLESTONE.defaultBlockState();
     private static final BlockState MOSSY_COBBLESTONE = Blocks.MOSSY_COBBLESTONE.defaultBlockState();
     private static final BlockState ANDESITE = Blocks.ANDESITE.defaultBlockState();
@@ -136,22 +142,28 @@ public final class WallBuilder {
             return 0;
         }
         int baseY = ground.baseY();
+        // C1 — over water the wall is a water-gate arcade: solid piers at
+        // intervals carry the wall, and the spans between them leave the water
+        // (and 2 blocks above it) open so a river flows THROUGH the wall
+        // instead of being dammed by a solid causeway. On land every column is
+        // solid. The parapet stays level everywhere.
+        boolean waterGateOpening = ground.overWater() && !isWaterPier(x, z);
 
         long placed = 0;
         if (ground.overWater()) {
-            // Causeway footing: cobblestone from the water surface down through
-            // the water to the solid bed, giving a level crossing at the water
-            // line. The wall then rises from baseY (the water surface) exactly
-            // as a land wall rises from its ground block.
-            for (int dy = 0; dy <= MAX_GROUND_DIG; dy++) {
-                BlockPos below = new BlockPos(x, baseY - dy, z);
-                BlockState state = region.getBlockState(below);
-                if (dy > 0 && state.getFluidState().isEmpty() && !state.isAir()) {
-                    break; // reached the solid bed
+            if (!waterGateOpening) {
+                // Pier: cobblestone from the water surface down to the solid bed.
+                for (int dy = 0; dy <= TOWER_FOOTING_MAX_DROP; dy++) {
+                    BlockPos below = new BlockPos(x, baseY - dy, z);
+                    BlockState state = region.getBlockState(below);
+                    if (dy > 0 && state.getFluidState().isEmpty() && !state.isAir()) {
+                        break; // reached the solid bed
+                    }
+                    region.setBlock(below, COBBLESTONE, 2);
+                    placed++;
                 }
-                region.setBlock(below, COBBLESTONE, 2);
-                placed++;
             }
+            // Arcade spans leave the water and the passage above it untouched.
         } else {
             // Land foundation: bridge small hollows under the wall (unchanged).
             for (int dy = 1; dy <= 2; dy++) {
@@ -163,19 +175,35 @@ public final class WallBuilder {
                 }
             }
         }
-        // Body: plinth, weathered brick, cornice.
-        for (int dy = 1; dy <= WALL_HEIGHT; dy++) {
+        // Body: plinth, weathered brick, cornice. Over an open arcade span the
+        // wall starts above the water passage (a lintel bridging the arch).
+        int bodyStart = waterGateOpening ? WATER_GATE_OPENING + 1 : 1;
+        for (int dy = bodyStart; dy <= WALL_HEIGHT; dy++) {
             region.setBlock(new BlockPos(x, baseY + dy, z), bodyBlock(x, baseY + dy, z, dy, WALL_HEIGHT), 2);
             placed++;
         }
-        // Crenellation: alternating merlons on the outer course only.
+        // Crenellation on the outer course, with a lantern every few merlons.
         if (outer) {
             int topY = baseY + WALL_HEIGHT + 1;
             region.setBlock(new BlockPos(x, topY, z),
                     ((x + z) & 1) == 0 ? merlonBlock(x, topY, z) : STONE_BRICK_SLAB, 2);
             placed++;
+            if (isWallLampSpot(x, z)) {
+                region.setBlock(new BlockPos(x, topY + 1, z), LANTERN, 2);
+                placed++;
+            }
         }
         return placed;
+    }
+
+    /** Solid-pier columns of the water-gate arcade (2-wide piers, ~4-wide arches). */
+    private static boolean isWaterPier(int x, int z) {
+        return Math.floorMod(Math.floorDiv(x + z, 2), 3) == 0;
+    }
+
+    /** Wall-top lantern spots: ~1 in 6 outer-course cells, on a merlon (x+z even). */
+    private static boolean isWallLampSpot(int x, int z) {
+        return Math.floorMod(x + z, 6) == 0;
     }
 
     // --- gates ---
@@ -231,12 +259,21 @@ public final class WallBuilder {
      */
     private static long stampGate(WorldGenLevel region, GateArch gate,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ) {
-        // Along-wall (lateral) unit vector = the road direction rotated 90°.
-        double len = Math.max(1.0e-6, Math.hypot(gate.dirX(), gate.dirZ()));
-        double dirX = gate.dirX() / len;
-        double dirZ = gate.dirZ() / len;
-        double latX = -dirZ;
-        double latZ = dirX;
+        // Snap the crossing to the dominant cardinal axis so the arch is
+        // axis-aligned — a road meeting the wall diagonally still gets a
+        // straight, non-staircased gate instead of a corrupt diagonal. dir is
+        // the through-wall axis; lat is the along-wall span.
+        int dirX;
+        int dirZ;
+        if (Math.abs(gate.dirX()) >= Math.abs(gate.dirZ())) {
+            dirX = gate.dirX() >= 0 ? 1 : -1;
+            dirZ = 0;
+        } else {
+            dirX = 0;
+            dirZ = gate.dirZ() >= 0 ? 1 : -1;
+        }
+        int latX = -dirZ;
+        int latZ = dirX;
         int roadY = gate.roadY();
 
         long placed = 0;
@@ -286,8 +323,11 @@ public final class WallBuilder {
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ) {
         long placed = 0;
         for (BlockPos tower : village.towerCenters()) {
-            if (tower.getX() + TOWER_RADIUS < minBlockX || tower.getX() - TOWER_RADIUS > maxBlockX
-                    || tower.getZ() + TOWER_RADIUS < minBlockZ || tower.getZ() - TOWER_RADIUS > maxBlockZ) {
+            // +1 so the external approach ladder (one cell past the shell) is
+            // covered by whichever chunk contains it.
+            int reach = TOWER_RADIUS + 1;
+            if (tower.getX() + reach < minBlockX || tower.getX() - reach > maxBlockX
+                    || tower.getZ() + reach < minBlockZ || tower.getZ() - reach > maxBlockZ) {
                 continue;
             }
             placed += stampTower(region, serverLevel, tower.getX(), tower.getZ(), village.center(),
@@ -357,7 +397,9 @@ public final class WallBuilder {
 
                 // Footing: force cobble down through any gap (or water) to the
                 // solid bed, then a flat floor block — the tower's rigid base.
-                for (int dy = 1; dy <= MAX_GROUND_DIG; dy++) {
+                // On steep terrain the downhill columns fall a long way, so the
+                // skirt reaches much deeper than a normal wall column would.
+                for (int dy = 1; dy <= TOWER_FOOTING_MAX_DROP; dy++) {
                     BlockPos below = new BlockPos(x, baseY - dy, z);
                     BlockState state = region.getBlockState(below);
                     if (state.getFluidState().isEmpty() && !state.isAir()) {
@@ -403,6 +445,29 @@ public final class WallBuilder {
                     clearAbove(region, x, baseY + TOWER_HEIGHT, z);
                 }
             }
+        }
+
+        // Two-stage access: an external ladder up the town-facing pedestal to
+        // the doorway threshold (so a raised tower on a slope/water is actually
+        // reachable from the town below), where the interior ladder above then
+        // continues to the deck. No stairs.
+        int approachX = cx + doorDx + Integer.signum(doorDx);
+        int approachZ = cz + doorDz + Integer.signum(doorDz);
+        if (approachX >= minBlockX && approachX <= maxBlockX
+                && approachZ >= minBlockZ && approachZ <= maxBlockZ) {
+            int approachGround = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, approachX, approachZ) - 1;
+            BlockState extLadder = Blocks.LADDER.defaultBlockState().setValue(LadderBlock.FACING, outward);
+            for (int yy = approachGround + 1; yy <= baseY; yy++) {
+                region.setBlock(new BlockPos(approachX, yy, approachZ), extLadder, 2);
+                placed++;
+            }
+            clearAbove(region, approachX, baseY, approachZ);
+        }
+
+        // A lantern on the deck lights the tower top and the wall around it.
+        if (cx >= minBlockX && cx <= maxBlockX && cz >= minBlockZ && cz <= maxBlockZ) {
+            region.setBlock(new BlockPos(cx, baseY + TOWER_HEIGHT + 1, cz), LANTERN, 2);
+            placed++;
         }
         return placed;
     }

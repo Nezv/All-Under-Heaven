@@ -64,6 +64,10 @@ public final class RoadBuilder {
     private static final int BRIDGE_POST_EVERY = 6;
     /** How far a bridge post probes down for the bed before giving up. */
     private static final int BRIDGE_POST_MAX_DROP = 40;
+    /** A tier-2 village with at least this fraction of its footprint over water gets no wall. */
+    private static final double WET_SUPPRESS_FRACTION = 0.5;
+    /** Spacing (blocks) of the village-footprint wetness probe grid. */
+    private static final int WET_PROBE_STEP = 8;
 
     /** Cached village geometry, keyed by packed start-chunk position. */
     private static final Map<Long, VillageContour> VILLAGE_CACHE = new ConcurrentHashMap<>();
@@ -195,6 +199,30 @@ public final class RoadBuilder {
     }
 
     /**
+     * C3 — fraction of a village's footprint that sits over water, sampled on a
+     * coarse grid from the generator noise (WORLD_SURFACE_WG vs OCEAN_FLOOR_WG,
+     * the same probe road heights use). No chunk loads; deterministic, cached
+     * with the contour. Drives whether the town gets a wall at all.
+     */
+    private static double villageWetFraction(ServerLevel serverLevel, BoundingBox bounds) {
+        ChunkGenerator generator = serverLevel.getChunkSource().getGenerator();
+        RandomState randomState = serverLevel.getChunkSource().randomState();
+        int wet = 0;
+        int total = 0;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x += WET_PROBE_STEP) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z += WET_PROBE_STEP) {
+                int surface = generator.getFirstOccupiedHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, serverLevel, randomState);
+                int floor = generator.getFirstOccupiedHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, serverLevel, randomState);
+                if (surface - floor >= 2) {
+                    wet++;
+                }
+                total++;
+            }
+        }
+        return total == 0 ? 0.0 : (double) wet / total;
+    }
+
+    /**
      * A1 — drains open water trapped inside a tier-2 town's walls. Each cell of
      * the walled interior that still has fluid at its live surface is filled up
      * to the water line (dirt body, grass cap) so a village straddling a river
@@ -267,8 +295,13 @@ public final class RoadBuilder {
                         VillageTier tier = Config.ENABLE_CITY_TIERS.getAsBoolean()
                                 ? VillageTier.of(serverLevel.getSeed(), start.getChunkPos())
                                 : VillageTier.TIER1;
+                        // C3 — a village sitting mostly in water gets no wall (a
+                        // wall ringing a lake never looks right); moderate water
+                        // is handled by the drain/causeway/water-gate passes.
+                        boolean wallsAllowed = tier != VillageTier.TIER2
+                                || villageWetFraction(serverLevel, start.getBoundingBox()) < WET_SUPPRESS_FRACTION;
                         VillageContour contour = VillageContour.of(start,
-                                Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt(), tier, serverLevel.getSeed());
+                                Config.ROAD_WRAP_MARGIN_BLOCKS.getAsInt(), tier, serverLevel.getSeed(), wallsAllowed);
                         if (Config.ROADS_DEBUG_LOG.getAsBoolean()) {
                             AllUnderHeaven.LOGGER.info(
                                     "[All Under Heaven] Roads debug: wrap for {} village at {} — {} loop points, {} corners, {} outer nodes, {} wall cells, {} towers",
