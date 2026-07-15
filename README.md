@@ -51,6 +51,18 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   doorway up to the parapet. Towers over water build on a cobble pier; tower
   centers over a ravine are skipped. Roads cutting through a hillside carve a
   4-block-tall opening.
+- **Water integration** (`feature/roads/RoadBuilder`) — the network adapts to
+  the random rivers and ponds. A tier-2 town straddling water has the open
+  water **drained** inside its walls (filled to the water line with dirt and
+  capped with grass, so the square reads as reclaimed ground rather than a
+  flooded gap; genuinely deep pools are left alone). Roads meeting water pick a
+  treatment by span: a **short crossing becomes a stone causeway** (solid
+  cobblestone from the bed up to the deck — a tidy ford, not a dirt lip over
+  the water), while a **long crossing becomes a bridge** — a stone deck on
+  cobblestone posts with fence railings, the water flowing through underneath.
+  Which is which is decided from the deterministic per-sample water flags, so
+  every chunk agrees. (Water detection reuses the noise probe already computed
+  for road heights; nothing forces a chunk load.)
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).

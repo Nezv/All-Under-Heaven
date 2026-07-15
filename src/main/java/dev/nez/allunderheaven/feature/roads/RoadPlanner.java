@@ -50,6 +50,8 @@ public final class RoadPlanner {
     static final int SAMPLE_STEP = 4;
     /** Max height change between adjacent samples (keeps every 1-block step ≤ 1 high). */
     private static final float MAX_STEP_RISE = 2.0f;
+    /** A wet run this many samples long (≈ this×{@link #SAMPLE_STEP} blocks) is bridged, not causewayed. */
+    private static final int BRIDGE_MIN_SAMPLES = 3;
     /** Radius (in grid cells) canonically searched for triangle-pruning candidates. */
     private static final int PRUNE_SEARCH_CELLS = 3;
 
@@ -269,6 +271,25 @@ public final class RoadPlanner {
             ys[i] = clamp(ys[i], ys[i + 1] - MAX_STEP_RISE, ys[i + 1] + MAX_STEP_RISE);
         }
 
+        // 4b. Classify wet runs: a long run spans open water and becomes a
+        // bridge (deck on posts); short runs stay a filled/stone causeway.
+        // Purely a function of wet[], so every chunk agrees which is which.
+        boolean[] bridge = new boolean[n];
+        int runStart = -1;
+        for (int i = 0; i <= n; i++) {
+            boolean w = i < n && wet[i];
+            if (w && runStart < 0) {
+                runStart = i;
+            } else if (!w && runStart >= 0) {
+                if (i - runStart >= BRIDGE_MIN_SAMPLES) {
+                    for (int k = runStart; k < i; k++) {
+                        bridge[k] = true;
+                    }
+                }
+                runStart = -1;
+            }
+        }
+
         // 5. Lamp spots every 10–20 blocks, alternating sides, never on water.
         List<RoadPath.Lamp> lamps = new ArrayList<>();
         if (Config.ROAD_LAMPS.getAsBoolean()) {
@@ -301,7 +322,7 @@ public final class RoadPlanner {
             maxX = Math.max(maxX, xs[i]);
             maxZ = Math.max(maxZ, zs[i]);
         }
-        return new RoadPath(xs, zs, ys, wet, List.copyOf(lamps), new RoadPath.Bounds2D(minX, minZ, maxX, maxZ));
+        return new RoadPath(xs, zs, ys, wet, bridge, List.copyOf(lamps), new RoadPath.Bounds2D(minX, minZ, maxX, maxZ));
     }
 
     private void displace(List<double[]> out, double x1, double z1, double x2, double z2, Random random, int depth) {

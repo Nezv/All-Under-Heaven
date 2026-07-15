@@ -50,6 +50,20 @@ public final class RoadBuilder {
     private static final int ENDPOINT_MATCH_DISTANCE = 48;
 
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+    private static final BlockState DRAIN_FILL = Blocks.DIRT.defaultBlockState();
+    private static final BlockState DRAIN_SURFACE = Blocks.GRASS_BLOCK.defaultBlockState();
+    private static final BlockState CAUSEWAY_FILL = Blocks.COBBLESTONE.defaultBlockState();
+    private static final BlockState BRIDGE_RAIL_BASE = Blocks.STONE_BRICKS.defaultBlockState();
+    private static final BlockState BRIDGE_POST = Blocks.COBBLESTONE.defaultBlockState();
+
+    /** Deepest pool of trapped water A1 fills inside the walls; deeper is left. */
+    private static final int DRAIN_MAX_DEPTH = 8;
+    /** Deepest water a road causeway fills solid before it just caps the top. */
+    private static final int CAUSEWAY_MAX_DEPTH = 8;
+    /** A bridge drops a support post to the bed every this many blocks. */
+    private static final int BRIDGE_POST_EVERY = 6;
+    /** How far a bridge post probes down for the bed before giving up. */
+    private static final int BRIDGE_POST_MAX_DROP = 40;
 
     /** Cached village geometry, keyed by packed start-chunk position. */
     private static final Map<Long, VillageContour> VILLAGE_CACHE = new ConcurrentHashMap<>();
@@ -118,6 +132,15 @@ public final class RoadBuilder {
             stampWrap(region, serverLevel, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
 
+        // (b2) Tier-2 towns: drain open water trapped inside the walls so a
+        // town over a river/pond reads as reclaimed ground. Runs before the
+        // walls (their foundations then sit on the fill) and the stoning.
+        for (VillageContour village : villages) {
+            if (village.tier() == VillageTier.TIER2) {
+                drainWalledInterior(region, village, minBlockX, minBlockZ, maxBlockX, maxBlockZ, tally);
+            }
+        }
+
         // (c) Tier-2 towns: vanilla dirt-path streets become stone.
         for (VillageContour village : villages) {
             if (village.tier() == VillageTier.TIER2) {
@@ -167,6 +190,50 @@ public final class RoadBuilder {
                     region.setBlock(pos, RoadPalettes.stoneSurfaceAt(x, z), 2);
                     tally.roadBlocks++;
                 }
+            }
+        }
+    }
+
+    /**
+     * A1 — drains open water trapped inside a tier-2 town's walls. Each cell of
+     * the walled interior that still has fluid at its live surface is filled up
+     * to the water line (dirt body, grass cap) so a village straddling a river
+     * or pond becomes dry reclaimed ground instead of a flooded square. Only
+     * actual fluid columns are touched (buildings/roads are already solid), and
+     * every read/write is inside this chunk, so it is deterministic and
+     * chunk-order independent. Water deeper than {@link #DRAIN_MAX_DEPTH} is left
+     * alone (a genuine pool reads better than a deep scar of fill).
+     */
+    private static void drainWalledInterior(WorldGenLevel region, VillageContour village,
+            int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Tally tally) {
+        for (int x = minBlockX; x <= maxBlockX; x++) {
+            for (int z = minBlockZ; z <= maxBlockZ; z++) {
+                if (!village.isInsideWalls(x, z)) {
+                    continue;
+                }
+                int topY = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                if (region.getBlockState(new BlockPos(x, topY, z)).getFluidState().isEmpty()) {
+                    continue; // dry surface here — nothing to drain
+                }
+                // Walk down to the solid bed, bounded by the max drain depth.
+                int bedY = topY;
+                int guard = 0;
+                while (guard <= DRAIN_MAX_DEPTH) {
+                    BlockState state = region.getBlockState(new BlockPos(x, bedY, z));
+                    if (state.getFluidState().isEmpty() && !state.isAir()) {
+                        break; // solid bed reached
+                    }
+                    bedY--;
+                    guard++;
+                }
+                if (topY - bedY <= 0 || guard > DRAIN_MAX_DEPTH) {
+                    continue; // no water, or too deep — leave it as a pool
+                }
+                for (int fy = bedY + 1; fy < topY; fy++) {
+                    region.setBlock(new BlockPos(x, fy, z), DRAIN_FILL, 2);
+                }
+                region.setBlock(new BlockPos(x, topY, z), DRAIN_SURFACE, 2);
+                tally.wallBlocks++;
             }
         }
     }
@@ -229,23 +296,38 @@ public final class RoadBuilder {
             double segLen = Math.hypot(path.xs()[i] - path.xs()[i - 1], path.zs()[i] - path.zs()[i - 1]);
             int steps = Math.max(1, (int) Math.ceil(segLen));
             int wet = path.wet()[i - 1] || path.wet()[i] ? 1 : 0;
+            int bridge = path.bridge()[i - 1] || path.bridge()[i] ? 1 : 0;
             for (int s = 0; s <= steps; s++) {
                 double f = (double) s / steps;
                 int x = (int) Math.round(path.xs()[i - 1] + (path.xs()[i] - path.xs()[i - 1]) * f);
                 int z = (int) Math.round(path.zs()[i - 1] + (path.zs()[i] - path.zs()[i - 1]) * f);
                 int y = Math.round(path.ys()[i - 1] + (path.ys()[i] - path.ys()[i - 1]) * (float) f);
-                centerline.add(new int[]{x, z, y, wet});
+                centerline.add(new int[]{x, z, y, wet, bridge});
             }
         }
         detectGates(centerline, villages, gateArches);
-        for (int[] p : centerline) {
+        for (int idx = 0; idx < centerline.size(); idx++) {
+            int[] p = centerline.get(idx);
             int x = p[0];
             int z = p[1];
-            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
-                continue;
+            if (p[4] == 1) {
+                // A3 — bridge deck; posts/rails reach ±2, so use a wider margin.
+                if (x + 2 < minBlockX || x - 2 > maxBlockX || z + 2 < minBlockZ || z - 2 > maxBlockZ) {
+                    continue;
+                }
+                int a = Math.max(0, idx - 1);
+                int b = Math.min(centerline.size() - 1, idx + 1);
+                double dirX = centerline.get(b)[0] - centerline.get(a)[0];
+                double dirZ = centerline.get(b)[1] - centerline.get(a)[1];
+                stampBridge(region, x, p[2], z, dirX, dirZ, idx,
+                        minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+            } else {
+                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                    continue;
+                }
+                stampCell3Wide(region, x, p[2], z, p[3] == 1, villages, null,
+                        minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
             }
-            stampCell3Wide(region, x, p[2], z, p[3] == 1, villages, null,
-                    minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
         for (RoadPath.Lamp lamp : path.lamps()) {
             if (lamp.x() >= minBlockX && lamp.x() <= maxBlockX && lamp.z() >= minBlockZ && lamp.z() <= maxBlockZ
@@ -453,6 +535,66 @@ public final class RoadBuilder {
     }
 
     /**
+     * A3 — a bridge cross-section over open water: a stone deck at road grade
+     * (3 walkable lanes plus a rail base on each side), fence railings on the
+     * outer lanes, and a cobblestone support post dropped to the bed at
+     * intervals. Nothing is filled beneath the deck, so the water shows through
+     * the span. The whole thing keys off the deterministic centerline
+     * (position + travel direction + along-index), so chunk halves match.
+     */
+    private static void stampBridge(WorldGenLevel region, int cx, int deckY, int cz,
+            double dirX, double dirZ, int alongIndex,
+            int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
+        double len = Math.max(1.0, Math.hypot(dirX, dirZ));
+        double px = -dirZ / len;
+        double pz = dirX / len;
+        RoadPalette palette = RoadPalettes.at(region, new BlockPos(cx, deckY, cz));
+
+        for (int o = -2; o <= 2; o++) {
+            int bx = (int) Math.round(cx + px * o);
+            int bz = (int) Math.round(cz + pz * o);
+            if (bx < minBlockX || bx > maxBlockX || bz < minBlockZ || bz > maxBlockZ) {
+                continue;
+            }
+            long key = (bx & 0xFFFFFFFFL) | ((long) bz << 32);
+            if (!stamped.add(key)) {
+                continue;
+            }
+            for (int dy = 1; dy <= 4; dy++) {
+                BlockPos above = new BlockPos(bx, deckY + dy, bz);
+                if (!region.getBlockState(above).isAir()) {
+                    region.setBlock(above, AIR, 2);
+                }
+            }
+            boolean rail = o == -2 || o == 2;
+            region.setBlock(new BlockPos(bx, deckY, bz),
+                    rail ? BRIDGE_RAIL_BASE : RoadPalettes.stoneSurfaceAt(bx, bz), 2);
+            tally.roadBlocks++;
+            if (rail) {
+                region.setBlock(new BlockPos(bx, deckY + 1, bz), palette.post(), 2);
+                tally.roadBlocks++;
+            }
+        }
+
+        // Support post under the centerline, down to the bed, at intervals.
+        if (Math.floorMod(alongIndex, BRIDGE_POST_EVERY) == 0
+                && cx >= minBlockX && cx <= maxBlockX && cz >= minBlockZ && cz <= maxBlockZ) {
+            int y = deckY - 1;
+            int guard = 0;
+            while (guard < BRIDGE_POST_MAX_DROP) {
+                BlockState state = region.getBlockState(new BlockPos(cx, y, cz));
+                if (!state.isAir() && state.getFluidState().isEmpty()) {
+                    break; // reached the bed
+                }
+                region.setBlock(new BlockPos(cx, y, cz), BRIDGE_POST, 2);
+                tally.roadBlocks++;
+                y--;
+                guard++;
+            }
+        }
+    }
+
+    /**
      * Places a 3-wide road patch centered on (x, z) at the planned height.
      * Cells inside {@code interiorClip} village wraps are skipped so roads
      * hand over to the wrap. Existing street surface is never overwritten
@@ -525,11 +667,30 @@ public final class RoadBuilder {
                 region.setBlock(above, AIR, 2);
             }
         }
-        for (int dy = 1; dy <= 2; dy++) {
-            BlockPos below = top.below(dy);
-            BlockState state = region.getBlockState(below);
-            if (state.isAir() || !state.getFluidState().isEmpty()) {
-                region.setBlock(below, palette.fill(), 2);
+        if (wet) {
+            // A2 — stone causeway: solid cobblestone from the bed up to the
+            // deck, so a short water crossing reads as a tidy stone ford
+            // instead of a 2-block dirt lip perched over the water.
+            int bedY = y - 1;
+            int guard = 0;
+            while (guard < CAUSEWAY_MAX_DEPTH) {
+                BlockState state = region.getBlockState(new BlockPos(x, bedY, z));
+                if (!state.isAir() && state.getFluidState().isEmpty()) {
+                    break; // solid bed reached
+                }
+                bedY--;
+                guard++;
+            }
+            for (int fy = bedY + 1; fy <= y - 1; fy++) {
+                region.setBlock(new BlockPos(x, fy, z), CAUSEWAY_FILL, 2);
+            }
+        } else {
+            for (int dy = 1; dy <= 2; dy++) {
+                BlockPos below = top.below(dy);
+                BlockState state = region.getBlockState(below);
+                if (state.isAir() || !state.getFluidState().isEmpty()) {
+                    region.setBlock(below, palette.fill(), 2);
+                }
             }
         }
         region.setBlock(top, RoadPalettes.surfaceAt(palette, x, z, wet), 2);

@@ -7,7 +7,8 @@ import java.util.List;
  * points every ~4 blocks with slope-relaxed heights, plus precomputed lamp
  * spots. Any chunk can independently materialize its slice of the same path.
  */
-public record RoadPath(int[] xs, int[] zs, float[] ys, boolean[] wet, List<Lamp> lamps, Bounds2D bounds) {
+public record RoadPath(int[] xs, int[] zs, float[] ys, boolean[] wet, boolean[] bridge,
+        List<Lamp> lamps, Bounds2D bounds) {
 
     /** Lamp post location (side offset already applied). */
     public record Lamp(int x, int z) {

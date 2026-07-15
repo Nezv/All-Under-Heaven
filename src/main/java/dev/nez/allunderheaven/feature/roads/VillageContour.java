@@ -46,6 +46,8 @@ public final class VillageContour {
     private final int gridW;
     private final int gridH;
     private final boolean[] interior;
+    /** Tier-2 "inside the walls" mask (grid coords); null for other tiers. */
+    private final boolean[] wallInterior;
     /** The wrap loop at block resolution: packed (x | z<<32) points, closed. */
     private final long[] loopPoints;
     /** Indices into loopPoints marking the simplified polygon's corners. */
@@ -62,7 +64,7 @@ public final class VillageContour {
 
     private VillageContour(BlockPos center, VillageTier tier, BoundingBox structureBounds,
             int gridMinX, int gridMinZ, int gridW, int gridH,
-            boolean[] interior, long[] loopPoints, int[] cornerIndices,
+            boolean[] interior, boolean[] wallInterior, long[] loopPoints, int[] cornerIndices,
             long[] wallInner, long[] wallOuter, List<BlockPos> towerCenters,
             List<BoundingBox> streetBoxes, List<BlockPos> outerNodes) {
         this.center = center;
@@ -73,6 +75,7 @@ public final class VillageContour {
         this.gridW = gridW;
         this.gridH = gridH;
         this.interior = interior;
+        this.wallInterior = wallInterior;
         this.loopPoints = loopPoints;
         this.cornerIndices = cornerIndices;
         this.wallInner = wallInner;
@@ -162,6 +165,19 @@ public final class VillageContour {
     }
 
     /**
+     * Whether (x, z) lies inside a tier-2 town's walls (up to the inner wall
+     * face). Used to drain trapped water; always false for tiers without a wall.
+     */
+    public boolean isInsideWalls(int x, int z) {
+        if (wallInterior == null) {
+            return false;
+        }
+        int gx = x - gridMinX;
+        int gz = z - gridMinZ;
+        return gx >= 0 && gz >= 0 && gx < gridW && gz < gridH && wallInterior[gz * gridW + gx];
+    }
+
+    /**
      * @param wrapMargin distance (blocks) between the wrap road centerline and
      *                   the building walls; larger values give a roomier ring.
      * @param tier       city tier; TIER2 additionally gets the wall bands.
@@ -213,7 +229,7 @@ public final class VillageContour {
         // 3. Trace the boundary of the largest connected region.
         List<long[]> boundary = traceLargestBoundary(interior, w, h);
         if (boundary.isEmpty()) {
-            return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
+            return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior, null,
                     new long[0], new int[0], new long[0], new long[0], List.of(),
                     List.copyOf(streets), List.of());
         }
@@ -255,6 +271,7 @@ public final class VillageContour {
         //    and (road edge + gap + 2) from it.
         long[] wallInner = new long[0];
         long[] wallOuter = new long[0];
+        boolean[] wallInterior = null;
         if (tier == VillageTier.TIER2 && loop.length > 0) {
             boolean[] roadMask = new boolean[w * h];
             for (long p : loop) {
@@ -271,6 +288,7 @@ public final class VillageContour {
             boolean[] toOuter = dilate(fill, w, h, gapEdge + 2);
             wallInner = bandToPoints(toInner, toGap, w, h, minX, minZ);
             wallOuter = bandToPoints(toOuter, toInner, w, h, minX, minZ);
+            wallInterior = toGap; // everything enclosed, up to the inner wall face
         }
 
         // 7. Natural outer nodes: street tips that reach beyond the wrap.
@@ -295,7 +313,7 @@ public final class VillageContour {
                 ? placeTowers(worldSeed, start.getChunkPos().pack(), loop, outer, center)
                 : List.of();
 
-        return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior,
+        return new VillageContour(center, tier, bounds, minX, minZ, w, h, interior, wallInterior,
                 loop, cornerIndices, wallInner, wallOuter, towers,
                 List.copyOf(streets), List.copyOf(outer));
     }
