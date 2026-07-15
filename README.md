@@ -33,16 +33,24 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   incoming connectors all switch to a worn stone-brick/cobble/andesite mix)
   and a medieval city wall: two courses thick, ~2 blocks outside the wrap
   road, 4 blocks tall on a cobblestone plinth with a chiseled cornice and
-  alternating merlons on the outer face. Where a road crosses the wall line
-  a **gate arch** opens instead — a 5-wide passage (road + 1 block of padding,
-  4 high over the roadway, 3 at the edges) with the wall rising over it in an
-  arc. Each town also raises 1–3 **guard towers** (seed-rolled, evenly spaced
-  along the wall, kept clear of gates): diameter-5 cylinders straddling the
-  wall, 6 high with a merlon crown, hollow inside with a spiral stair up to
-  the deck and a doorway facing the town. Wall columns standing in water or
-  over a ravine are skipped (the wall breaks cleanly at rivers and canyon
-  rims), while roads crossing a ravine keep their grade and bridge across.
-  Roads cutting through a hillside now carve a 4-block-tall opening.
+  alternating merlons on the outer face. Where the wall meets water it
+  **crosses on a cobblestone causeway** — the footing sinks to the bed and the
+  body rides the water surface — so a town straddling a river or ponds keeps an
+  unbroken ring; only dry ravine rims still break the wall (roads crossing a
+  ravine keep their grade and bridge across). Where a road crosses the wall
+  line a **constant gate arch** is cut instead: each crossing is resolved to a
+  single anchor (the point on the wall line nearest the road centerline, plus
+  the road's travel direction and surface height), and a rigid 5-wide passage —
+  arcing from 3 high at the jambs to 5 at the crown, with a merloned gatehouse
+  lintel over it — is stamped relative to the road surface, identical no matter
+  which chunk generates which half. Each town also raises 1–3 **guard towers**
+  (seed-rolled, evenly spaced along the wall, kept clear of gates): rigid
+  diameter-7 cylinders stamped off a single base height (interiors force-cleared,
+  gaps below force-filled, so terrain never shifts the structure), 6 high with a
+  merlon crown and a **ladder** climbing the interior face of the town-facing
+  doorway up to the parapet. Towers over water build on a cobble pier; tower
+  centers over a ravine are skipped. Roads cutting through a hillside carve a
+  4-block-tall opening.
 
 > NeoForge for 26.2 is currently a **beta** line (`26.2.0.x-beta`). Expect occasional breaking
 > changes until it stabilizes — see [Updating versions](#updating-versions).

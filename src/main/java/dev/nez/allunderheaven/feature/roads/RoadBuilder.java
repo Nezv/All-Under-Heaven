@@ -1,7 +1,6 @@
 package dev.nez.allunderheaven.feature.roads;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -89,12 +88,13 @@ public final class RoadBuilder {
 
         List<VillageContour> villages = resolveLocalVillages(region, serverLevel, pos, planner);
         Set<Long> stamped = new HashSet<>();
-        Map<Long, int[]> gates = new HashMap<>();
+        List<WallBuilder.GateArch> gateArches = new ArrayList<>();
         Tally tally = new Tally();
 
         // (a) Inter-village roads (with wrap clipping + outer-node connectors).
-        // Wall cells crossed by a road centerline are collected as gate cells
-        // along the way, so the wall pass can arch over instead of sealing.
+        // Each road's full centerline is scanned (unclipped, chunk-order
+        // independent) for wall crossings, resolved to constant gate-arch
+        // anchors the wall pass carves through instead of sealing.
         for (int i = 0; i < nodes.size(); i++) {
             for (int j = i + 1; j < nodes.size(); j++) {
                 VillageNode a = nodes.get(i);
@@ -104,7 +104,7 @@ public final class RoadBuilder {
                 }
                 planner.path(a, b).ifPresent(path -> {
                     if (path.bounds().grow(8).intersects(minBlockX, minBlockZ, maxBlockX, maxBlockZ)) {
-                        stampPath(region, serverLevel, path, villages, gates,
+                        stampPath(region, serverLevel, path, villages, gateArches,
                                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
                     }
                 });
@@ -125,11 +125,18 @@ public final class RoadBuilder {
             }
         }
 
-        // (d) Tier-2 towns: the city wall around the wrap (with gate arches
-        // where roads cross), plus the guard towers.
+        // (d) Tier-2 towns: the plain city wall around the wrap, then the
+        // constant gate arches carved through it where roads cross, then the
+        // guard towers. Gates run after the wall so they overwrite it; the
+        // deduped anchor set is identical in every chunk, so border-spanning
+        // arches match.
         for (VillageContour village : villages) {
-            tally.wallBlocks += WallBuilder.stampWalls(region, serverLevel, village, gates,
+            tally.wallBlocks += WallBuilder.stampWalls(region, serverLevel, village,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+        }
+        tally.wallBlocks += WallBuilder.stampGates(region, WallBuilder.dedupeGates(gateArches),
+                minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+        for (VillageContour village : villages) {
             tally.wallBlocks += WallBuilder.stampTowers(region, serverLevel, village,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ);
         }
@@ -212,28 +219,33 @@ public final class RoadBuilder {
     }
 
     private static void stampPath(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
-            List<VillageContour> villages, Map<Long, int[]> gates,
+            List<VillageContour> villages, List<WallBuilder.GateArch> gateArches,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
+        // Build the full centerline (unclipped) so gate detection sees each
+        // wall crossing whole and resolves it to the same anchor in every chunk.
+        List<int[]> centerline = new ArrayList<>();
         int n = path.sampleCount();
         for (int i = 1; i < n; i++) {
             double segLen = Math.hypot(path.xs()[i] - path.xs()[i - 1], path.zs()[i] - path.zs()[i - 1]);
             int steps = Math.max(1, (int) Math.ceil(segLen));
+            int wet = path.wet()[i - 1] || path.wet()[i] ? 1 : 0;
             for (int s = 0; s <= steps; s++) {
                 double f = (double) s / steps;
                 int x = (int) Math.round(path.xs()[i - 1] + (path.xs()[i] - path.xs()[i - 1]) * f);
                 int z = (int) Math.round(path.zs()[i - 1] + (path.zs()[i] - path.zs()[i - 1]) * f);
-                if (x + 2 < minBlockX || x - 2 > maxBlockX || z + 2 < minBlockZ || z - 2 > maxBlockZ) {
-                    continue;
-                }
                 int y = Math.round(path.ys()[i - 1] + (path.ys()[i] - path.ys()[i - 1]) * (float) f);
-                collectGateCells(villages, gates, x, y, z);
-                if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
-                    continue;
-                }
-                boolean wet = path.wet()[i - 1] || path.wet()[i];
-                stampCell3Wide(region, x, y, z, wet, villages, null,
-                        minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
+                centerline.add(new int[]{x, z, y, wet});
             }
+        }
+        detectGates(centerline, villages, gateArches);
+        for (int[] p : centerline) {
+            int x = p[0];
+            int z = p[1];
+            if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
+                continue;
+            }
+            stampCell3Wide(region, x, p[2], z, p[3] == 1, villages, null,
+                    minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
         for (RoadPath.Lamp lamp : path.lamps()) {
             if (lamp.x() >= minBlockX && lamp.x() <= maxBlockX && lamp.z() >= minBlockZ && lamp.z() <= maxBlockZ
@@ -243,34 +255,63 @@ public final class RoadBuilder {
         }
         // Re-anchor each end of the road onto the village's natural outer
         // street end (the blue-to-contour derivation).
-        stampConnector(region, serverLevel, path, villages, gates, true,
+        stampConnector(region, serverLevel, path, villages, gateArches, true,
                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
-        stampConnector(region, serverLevel, path, villages, gates, false,
+        stampConnector(region, serverLevel, path, villages, gateArches, false,
                 minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
     }
 
     /**
-     * Where a road centerline sample passes within 2 blocks of a tier-2 wall
-     * cell, mark that cell as a gate cell: {distance from the centerline,
-     * road surface Y}. The road is 3 wide, so distance 0-1 lies over the road
-     * itself and 2 is the one-block padding — a 5-wide opening in total,
-     * matching the arch profile in {@link WallBuilder}.
+     * Resolves each place a road centerline crosses a village wall into a
+     * single {@link WallBuilder.GateArch} anchor. Walking the (unclipped)
+     * centerline, the contiguous run of samples over the 2-course wall band is
+     * found; its midpoint is the crossing center, its endpoints give the road's
+     * travel direction, and the sample's Y is the road surface. Because the
+     * whole centerline is scanned (never chunk-clipped) and the village geometry
+     * is fixed, every chunk that stamps any part of the arch derives the same
+     * anchor — the crux of keeping the arch consistent across chunk borders.
      */
-    private static void collectGateCells(List<VillageContour> villages, Map<Long, int[]> gates, int x, int y, int z) {
+    private static void detectGates(List<int[]> centerline, List<VillageContour> villages,
+            List<WallBuilder.GateArch> out) {
+        int n = centerline.size();
         for (VillageContour village : villages) {
             if (!village.hasWall()) {
                 continue;
             }
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dz = -2; dz <= 2; dz++) {
-                    if (village.isWallCell(x + dx, z + dz)) {
-                        int dist = Math.max(Math.abs(dx), Math.abs(dz));
-                        gates.merge(VillageContour.pack(x + dx, z + dz), new int[]{dist, y},
-                                (a, b) -> b[0] < a[0] ? b : a);
+            int runStart = -1;
+            for (int k = 0; k <= n; k++) {
+                boolean on = k < n && onWallBand(village, centerline.get(k)[0], centerline.get(k)[1]);
+                if (on && runStart < 0) {
+                    runStart = k;
+                } else if (!on && runStart >= 0) {
+                    int runEnd = k - 1;
+                    int[] mid = centerline.get((runStart + runEnd) / 2);
+                    double dirX = centerline.get(runEnd)[0] - centerline.get(runStart)[0];
+                    double dirZ = centerline.get(runEnd)[1] - centerline.get(runStart)[1];
+                    if (dirX == 0 && dirZ == 0) {
+                        // Single-cell run: read direction from the wider neighbourhood.
+                        int a = Math.max(0, runStart - 1);
+                        int b = Math.min(n - 1, runEnd + 1);
+                        dirX = centerline.get(b)[0] - centerline.get(a)[0];
+                        dirZ = centerline.get(b)[1] - centerline.get(a)[1];
                     }
+                    out.add(new WallBuilder.GateArch(mid[0], mid[1], mid[2], dirX, dirZ));
+                    runStart = -1;
                 }
             }
         }
+    }
+
+    /** Whether (x, z) is on or adjacent to a wall course cell (the 2-course band). */
+    private static boolean onWallBand(VillageContour village, int x, int z) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (village.isWallCell(x + dx, z + dz)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -279,7 +320,7 @@ public final class RoadBuilder {
      * Deterministic: depends only on the path and the village geometry.
      */
     private static void stampConnector(WorldGenLevel region, ServerLevel serverLevel, RoadPath path,
-            List<VillageContour> villages, Map<Long, int[]> gates, boolean fromStart,
+            List<VillageContour> villages, List<WallBuilder.GateArch> gateArches, boolean fromStart,
             int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ, Set<Long> stamped, Tally tally) {
         int n = path.sampleCount();
         int endX = fromStart ? path.xs()[0] : path.xs()[n - 1];
@@ -335,18 +376,23 @@ public final class RoadBuilder {
             return; // the road already arrives at the street end
         }
         RoadPalette palette = village.tier() == VillageTier.TIER2 ? RoadPalettes.STONE_CITY : null;
+        // Full connector centerline (unclipped), so its wall crossing resolves
+        // to the same gate anchor as the main path does — this stretch is often
+        // the one that actually threads the wall on the way to the street end.
+        List<int[]> centerline = new ArrayList<>();
         for (int s = 0; s <= steps; s++) {
             int x = (int) Math.round(exitX + (best.getX() - exitX) * (double) s / steps);
             int z = (int) Math.round(exitZ + (best.getZ() - exitZ) * (double) s / steps);
-            if (x + 2 < minBlockX || x - 2 > maxBlockX || z + 2 < minBlockZ || z - 2 > maxBlockZ) {
-                continue;
-            }
-            int y = terrainHeight(serverLevel, x, z);
-            collectGateCells(villages, gates, x, y, z);
+            centerline.add(new int[]{x, z, terrainHeight(serverLevel, x, z), 0});
+        }
+        detectGates(centerline, villages, gateArches);
+        for (int[] p : centerline) {
+            int x = p[0];
+            int z = p[1];
             if (x + 1 < minBlockX || x - 1 > maxBlockX || z + 1 < minBlockZ || z - 1 > maxBlockZ) {
                 continue;
             }
-            stampCell3Wide(region, x, y, z, false, null, palette,
+            stampCell3Wide(region, x, p[2], z, false, null, palette,
                     minBlockX, minBlockZ, maxBlockX, maxBlockZ, stamped, tally);
         }
     }
