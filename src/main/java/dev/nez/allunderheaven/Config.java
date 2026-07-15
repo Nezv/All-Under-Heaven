@@ -36,6 +36,11 @@ public class Config {
             .comment("On login, tell the player about the nearest civilization (name, distance, map waypoint).")
             .define("spawnCivilizationBriefing", true);
 
+    public static final ModConfigSpec.BooleanValue SHOW_CITY_MAP_LABELS = BUILDER
+            .comment("With Xaero's Minimap installed, place a labelled waypoint at each nearby city's centre so its",
+                    "name shows on the minimap and world map. Client-side; works in singleplayer (reads the local world).")
+            .define("showCityMapLabels", true);
+
     public static final ModConfigSpec.IntValue VILLAGE_CHECK_INTERVAL_TICKS = BUILDER
             .comment("How often (in ticks) to check whether players entered or left a village.")
             .defineInRange("villageCheckIntervalTicks", 20, 1, 200);

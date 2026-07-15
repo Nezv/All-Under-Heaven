@@ -17,6 +17,7 @@
   "allunderheaven.configuration.announceVillageEntry": "Announce Village Entry",
   "allunderheaven.configuration.sendXaeroWaypoints": "Send Xaero Map Waypoints",
   "allunderheaven.configuration.spawnCivilizationBriefing": "Civilization Briefing On Login",
+  "allunderheaven.configuration.showCityMapLabels": "City Name Labels On Xaero Map",
   "allunderheaven.configuration.villageCheckIntervalTicks": "Village Check Interval (Ticks)",
   "allunderheaven.configuration.enableRoads": "Generate Roads",
   "allunderheaven.configuration.roadWrapMarginBlocks": "Village Wrap Distance (Blocks)",

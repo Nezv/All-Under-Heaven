@@ -9,7 +9,10 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   action bar when entered, first discoveries are announced in chat, and players
   get a nearest-civilization briefing on login. With Xaero's Minimap/World Map
   installed (bundled in dev runs), discoveries come with a clickable waypoint
-  that marks the village on the map.
+  that marks the village on the map, and every nearby city is auto-labelled with
+  its name at its centre on the minimap and world map (a managed, globally-visible
+  Xaero waypoint set the mod keeps in sync as you explore — client-side,
+  singleplayer; toggle `showCityMapLabels`).
 - **Roads** (`feature/roads/`) — a seed-deterministic road network generated
   as part of worldgen itself (a feature at the `top_layer_modification` step,
   so roads appear with the terrain, off the server thread, exactly like

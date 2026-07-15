@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import dev.nez.allunderheaven.Config;
+import dev.nez.allunderheaven.feature.villages.VillageNames;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
@@ -140,6 +141,17 @@ public final class RoadPlanner {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * The deterministic display name of a village node — the same name the
+     * entry action bar shows, keyed on the structure start chunk (the placement
+     * candidate chunk for the node's cell).
+     */
+    public String nameOf(VillageNode node) {
+        ChunkPos startChunk = placement.getPotentialStructureChunk(level.getSeed(),
+                node.cellX() * placement.spacing(), node.cellZ() * placement.spacing());
+        return VillageNames.of(level.getSeed(), startChunk);
     }
 
     /** All existing villages within {@code radiusCells} of the given cell. */

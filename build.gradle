@@ -129,6 +129,12 @@ dependencies {
     localRuntime "maven.modrinth:xaeros-world-map:${xaero_worldmap_version}"
     localRuntime "maven.modrinth:xaeros-minimap:${xaero_minimap_version}"
 
+    // Compile against Xaero's Minimap so the city map-label integration can call
+    // its waypoint API directly. Client-only and guarded by ModList.isLoaded at
+    // runtime (the Xaero-referencing bridge class is never loaded without Xaero),
+    // so this stays an optional dependency.
+    compileOnly "maven.modrinth:xaeros-minimap:${xaero_minimap_version}"
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"
