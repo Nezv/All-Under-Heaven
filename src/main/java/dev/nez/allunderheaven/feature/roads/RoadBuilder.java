@@ -760,4 +760,19 @@ public final class RoadBuilder {
         RandomState randomState = serverLevel.getChunkSource().randomState();
         return generator.getFirstOccupiedHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, serverLevel, randomState);
     }
+
+    /**
+     * Deterministic solid support height at (x, z) from the generator noise: the
+     * sea/river bed under water, otherwise the surface. Like {@link
+     * #terrainHeight} it is a pure function of the seed (no chunk loads, immune
+     * to already-placed blocks), so structures that span chunks — the towers —
+     * can extend a footing to real ground identically in every chunk.
+     */
+    static int supportHeight(ServerLevel serverLevel, int x, int z) {
+        ChunkGenerator generator = serverLevel.getChunkSource().getGenerator();
+        RandomState randomState = serverLevel.getChunkSource().randomState();
+        int surface = generator.getFirstOccupiedHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, serverLevel, randomState);
+        int floor = generator.getFirstOccupiedHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, serverLevel, randomState);
+        return surface - floor >= 2 ? floor : surface;
+    }
 }

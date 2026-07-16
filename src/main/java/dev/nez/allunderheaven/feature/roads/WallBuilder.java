@@ -337,30 +337,28 @@ public final class WallBuilder {
     }
 
     /**
-     * A rigid diameter-7 cylinder straddling the wall. The whole tower shares a
-     * SINGLE base Y taken from its center column (the water surface over water,
-     * live ground otherwise), and every block is stamped relative to that base —
-     * interiors and everything above the shell are force-cleared to air, gaps
-     * below are force-filled with cobble — so uneven terrain can never shove
-     * part of the structure up or down; a neighbouring chunk stamping the other
-     * half recomputes the same base from the same center and lines up exactly.
+     * A rigid diameter-7 cylinder straddling the wall, with one flat top.
      *
-     * <p>A {@link Blocks#LADDER ladder} climbs the interior face of the doorway
-     * wall from the floor to the deck (with the deck left open where it emerges),
-     * so a player steps through the town-facing doorway and climbs to the
-     * merloned parapet. Tower centers in water build on a cobble pier; centers
-     * over a ravine are skipped.
+     * <p>The base Y is the generator's NOISE surface at the center — a pure
+     * function of the seed, NOT the live heightmap. A tower spans several chunks
+     * and each intersecting chunk re-stamps every column; reading placed blocks
+     * let the base jump to the tower's own top in a later chunk (doubling the
+     * columns and burying them in cobble, and dragging the outer ladder up).
+     * With a noise base, every chunk agrees on one base — so all blocks end at
+     * the same height (bar the merlon fringe).
+     *
+     * <p>Where a column would otherwise float — a cliff or water edge, i.e. the
+     * deterministic ground sits below the base — the tower is extended straight
+     * down to that ground in its own materials (shell body outside, cobble
+     * inside), so the base never floats. Flat ground adds nothing.
+     *
+     * <p>Access is two ladders: an external one up the town-facing pedestal from
+     * the ground to the doorway threshold, and an interior one from the doorway
+     * to the deck (left open where it emerges).
      */
     private static long stampTower(WorldGenLevel region, ServerLevel serverLevel, int cx, int cz,
             BlockPos villageCenter, int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ) {
-        Ground ground = findWallGround(region, cx, cz);
-        if (ground == null) {
-            return 0;
-        }
-        if (!ground.overWater() && RoadBuilder.terrainHeight(serverLevel, cx, cz) - ground.baseY() > RAVINE_DROP) {
-            return 0; // tower center over a ravine: skip the tower
-        }
-        int baseY = ground.baseY();
+        int baseY = RoadBuilder.terrainHeight(serverLevel, cx, cz);
 
         // Doorway on the outer shell cell facing the town (dominant axis).
         int toCenterX = villageCenter.getX() - cx;
@@ -375,8 +373,8 @@ public final class WallBuilder {
         Direction outward = doorDx != 0
                 ? (doorDx > 0 ? Direction.EAST : Direction.WEST)
                 : (doorDz > 0 ? Direction.SOUTH : Direction.NORTH);
-        // The ladder clings to the doorway wall from one interior cell inward,
-        // facing into the tower (so its support block is the door wall behind).
+        // The interior ladder clings to the doorway wall from one interior cell
+        // inward, facing into the tower (its support block is the door wall).
         int ladderX = cx + doorDx - Integer.signum(doorDx);
         int ladderZ = cz + doorDz - Integer.signum(doorDz);
         BlockState ladder = Blocks.LADDER.defaultBlockState().setValue(LadderBlock.FACING, outward.getOpposite());
@@ -395,21 +393,17 @@ public final class WallBuilder {
                 }
                 boolean shell = d2 >= TOWER_SHELL_R2;
 
-                // Footing: force cobble down through any gap (or water) to the
-                // solid bed, then a flat floor block — the tower's rigid base.
-                // On steep terrain the downhill columns fall a long way, so the
-                // skirt reaches much deeper than a normal wall column would.
-                for (int dy = 1; dy <= TOWER_FOOTING_MAX_DROP; dy++) {
-                    BlockPos below = new BlockPos(x, baseY - dy, z);
-                    BlockState state = region.getBlockState(below);
-                    if (state.getFluidState().isEmpty() && !state.isAir()) {
-                        break;
-                    }
-                    region.setBlock(below, COBBLESTONE, 2);
-                    placed++;
-                }
+                // Flat floor slab at the single base height.
                 region.setBlock(new BlockPos(x, baseY, z), COBBLESTONE, 2);
                 placed++;
+                // Cliff/water skirt: only where the deterministic ground is below
+                // the base, extend the tower down to it so nothing floats — shell
+                // columns continue in the wall's stone, interior in cobble.
+                int support = RoadBuilder.supportHeight(serverLevel, x, z);
+                for (int y = baseY - 1; y > support && y >= baseY - TOWER_FOOTING_MAX_DROP; y--) {
+                    region.setBlock(new BlockPos(x, y, z), shell ? bodyBlock(x, y, z, 2, TOWER_HEIGHT) : COBBLESTONE, 2);
+                    placed++;
+                }
 
                 if (shell) {
                     boolean door = dx == doorDx && dz == 0 || dz == doorDz && dx == 0;
@@ -455,7 +449,11 @@ public final class WallBuilder {
         int approachZ = cz + doorDz + Integer.signum(doorDz);
         if (approachX >= minBlockX && approachX <= maxBlockX
                 && approachZ >= minBlockZ && approachZ <= maxBlockZ) {
-            int approachGround = region.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, approachX, approachZ) - 1;
+            // Deterministic ground (not the live heightmap, which the tower's own
+            // blocks would inflate across chunks — that was the bug making this
+            // ladder run to the tower top). Only spans the pedestal up to the
+            // doorway threshold; nothing when the ground is already at the base.
+            int approachGround = RoadBuilder.terrainHeight(serverLevel, approachX, approachZ);
             BlockState extLadder = Blocks.LADDER.defaultBlockState().setValue(LadderBlock.FACING, outward);
             for (int yy = approachGround + 1; yy <= baseY; yy++) {
                 region.setBlock(new BlockPos(approachX, yy, approachZ), extLadder, 2);

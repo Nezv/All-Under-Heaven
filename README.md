@@ -50,14 +50,16 @@ A [NeoForge](https://neoforged.net/) content mod for **Minecraft Java 26.2**, st
   gatehouse lintel over it — is stamped relative to the road surface, identical
   no matter which chunk generates which half. Each town also raises 1–3 **guard
   towers** (seed-rolled, evenly spaced along the wall, kept clear of gates):
-  rigid diameter-7 cylinders stamped off a single base height (interiors
-  force-cleared, footings force-filled all the way down to the ground even on a
-  steep slope, so terrain never shifts or floats the structure), 6 high with a
-  merlon crown and a deck lantern. Access is a **two-stage climb**: an external
-  ladder up the town-facing pedestal to the doorway, then an interior ladder
-  from the doorway to the parapet (no stairs). Towers over water build on a
-  cobble pier; tower centers over a ravine are skipped. Roads cutting through a
-  hillside carve a 4-block-tall opening.
+  rigid diameter-7 cylinders with one flat top, 6 high with a merlon crown and
+  a deck lantern. Their base height comes from the generator noise (a pure
+  function of the seed, not placed blocks), so a tower that spans several chunks
+  keeps one consistent base and top no matter which chunk generates which slice.
+  Only where a column would otherwise float — a cliff or water edge — the tower
+  is extended straight down to solid ground in its own stonework, so the base is
+  never hanging. Access is a **two-stage climb**: an external ladder up the
+  town-facing pedestal from the ground to the doorway, then an interior ladder
+  from the doorway to the parapet (no stairs). Roads cutting through a hillside
+  carve a 4-block-tall opening.
 - **Water integration** (`feature/roads/RoadBuilder`) — the network adapts to
   the random rivers and ponds. A tier-2 town **sitting mostly in water gets no
   wall at all** (a wall ringing a lake never looks right); a town merely
