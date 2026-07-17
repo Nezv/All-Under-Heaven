@@ -1,16 +1,20 @@
 """Procedural wyvern model generator for All Under Heaven.
 
 Defines semirealistic, House-of-the-Dragon-style wyverns (two hind legs,
-wings as forelimbs) as a bone hierarchy + axis-aligned cuboids, in two
+wings as forelimbs) as a bone hierarchy + axis-aligned cuboids, in three
 variants, and emits for each:
 
-  out/wyvern_<variant>.bbmodel   - Blockbench project (the editable master)
-  out/wyvern_<variant>.geo.json  - bedrock geometry for GeckoLib (later step)
-  out/<variant>_*.png            - software-rendered previews for iteration
+  out/wyvern_<variant>.bbmodel        - Blockbench project (editable master,
+                                        flight animation embedded + playable)
+  out/wyvern_<variant>.geo.json       - bedrock geometry for GeckoLib
+  out/wyvern_<variant>.animation.json - GeckoLib flight animation
+  out/<variant>_*.png                 - software-rendered preview stills
+  out/<variant>_fly.gif / _fly_sheet.png - animated flight preview + stills
 
 Variants:
-  black - near-black hide, oversized wings, purple eyes
-  white - ivory hide, elongated 5-segment neck, white eyes (dark sockets)
+  red   - baseline: brick hide, amber eyes, stock proportions
+  black - grandiose: 1.69x four-fingered wings, grey membranes/eyes
+  white - ethereal: slim, 7-segment neck, 9-segment tail, whiskers
 
 Design rules that keep the models animation-ready:
   * All rest-pose orientation lives on BONES (groups), not cubes, so GeckoLib
@@ -49,6 +53,7 @@ class Bone:
     pivot: tuple[float, float, float]
     rot: tuple[float, float, float] = (0.0, 0.0, 0.0)  # degrees, applied Z*Y*X
     color: tuple[int, int, int] = (140, 140, 140)  # preview only
+    uuid: str = ""  # stable id shared by outliner + animation animators
 
 
 @dataclass
@@ -141,7 +146,7 @@ def reset():
 
 
 def bone(name, parent, pivot, rot=(0, 0, 0), color=(140, 140, 140)):
-    BONES.append(Bone(name, parent, pivot, rot, color))
+    BONES.append(Bone(name, parent, pivot, rot, color, str(uuid.uuid4())))
     return name
 
 
@@ -379,6 +384,105 @@ def ground_model():
         c.hi = (c.hi[0], c.hi[1] + shift, c.hi[2])
 
 
+# ---------------------------------------------------------- flight animation
+
+FLY_LEN = 2.0   # seconds per wingbeat at wing_scale 1.0 (the ~2 s GoT beat)
+FLY_KEYS = 8    # looping channels bake to this many uniform catmullrom keys
+
+
+def _skew_cos(theta, k=0.30):
+    """Cosine with a skewed time axis: the fall (downstroke) runs faster than
+    the rise (recovery) - the wing powers down and floats back up."""
+    return math.cos(theta + k * math.sin(theta))
+
+
+def fly_channels(v: Variant):
+    """Procedural straight-flight cycle, generalized by the variant's build:
+    period and flap depth follow wing_scale (a bigger wing beats slower and
+    shallower), the neck counter-sway and tail wave distribute over however
+    many segments the variant actually has, whiskers trail only if present.
+
+    Returns (period_seconds, {bone: {channel: [(t, (x, y, z)), ...]}}) in
+    Blockbench space (left side authored, right side sign-mirrored on y/z).
+    Rotation keys are DELTAS on top of the rest pose, per bbmodel/GeckoLib
+    semantics (keyframe 0 = bind pose)."""
+    T = FLY_LEN * v.wing_scale ** 0.25
+    W = 2 * math.pi / T
+    amp = 30.0 / v.wing_scale ** 0.35
+    ch: dict[str, dict[str, object]] = {}
+
+    def rot(b, f):
+        ch.setdefault(b, {})["rotation"] = f
+
+    def pos(b, f):
+        ch.setdefault(b, {})["position"] = f
+
+    # wings: master flap on the humerus (Z = flap axis for an X-spar wing);
+    # forearm and hand run the SAME skewed wave late and shallower, so the
+    # wing visibly flexes under its own inertia. The hand also folds back a
+    # touch (Y) during the recovery stroke.
+    for side, sx in (("l", 1), ("r", -1)):
+        rot(f"wing_{side}_arm",
+            lambda t, s=sx: (0, 0, s * (-4 + amp * _skew_cos(W * t))))
+        rot(f"wing_{side}_fore",
+            lambda t, s=sx: (0, 0, s * 0.55 * amp * _skew_cos(W * t - 0.55)))
+        rot(f"wing_{side}_hand",
+            lambda t, s=sx: (0, -s * 2.5 * (1 - math.cos(W * t - 1.6)),
+                             s * 0.32 * amp * _skew_cos(W * t - 1.05)))
+
+    # body heaves with the lift: lowest at the top of the stroke, rising
+    # through the powered downstroke; a subtle pitch rocks behind the heave
+    pos("body", lambda t: (0, -1.6 * math.cos(W * t), 0))
+    rot("body", lambda t: (1.8 * math.sin(W * t - 2.1), 0, 0))
+
+    # neck: a small counter-wave travels head-ward across half a cycle; the
+    # head counter-pitches against the body so the gaze stays near-level.
+    # Per-segment amplitude divides by the chain length, so long necks bend
+    # the same total arc as short ones.
+    n = len(v.neck)
+    for i in range(1, n + 1):
+        a, ph = 6.0 / n, math.pi + (i / n) * math.pi
+        rot(f"neck{i}", lambda t, a=a, ph=ph: (a * math.sin(W * t - ph), 0, 0))
+    rot("head", lambda t: (2.0 * math.sin(W * t - 2.1 - math.pi), 0, 0))
+
+    if v.whiskers:
+        for side in ("l", "r"):
+            rot(f"whisker_{side}_1", lambda t: (7 * math.sin(W * t - 2.4), 0, 0))
+            rot(f"whisker_{side}_2", lambda t: (10 * math.sin(W * t - 3.1), 0, 0))
+
+    # tail: a vertical wave rippling tip-ward (a bit over one wavelength
+    # along the chain regardless of segment count), growing toward the tip
+    m = len(v.tail) if v.tail else 7
+    for i in range(1, m + 1):
+        a = 1.1 + 3.4 * (i / m) ** 1.5
+        ph = 0.7 + (i / m) * 2.3 * math.pi
+        rot(f"tail{i}", lambda t, a=a, ph=ph: (a * math.sin(W * t - ph), 0, 0))
+    rot("tail_fin", lambda t: (5.5 * math.sin(W * t - 1.2 - 2.3 * math.pi), 0, 0))
+
+    # legs: held tucked - femur swept well back, shin near-horizontal, foot
+    # pointing aft, toes drooping relaxed (world pitches approx -52/-74/-86)
+    for side in ("l", "r"):
+        rot(f"leg_{side}_thigh", (-80, 0, 0))
+        rot(f"leg_{side}_shin", (24, 0, 0))
+        rot(f"leg_{side}_foot", (-30, 0, 0))
+        rot(f"leg_{side}_toes", (-40, 0, 0))
+
+    # bake: looping channels become FLY_KEYS+1 uniform catmullrom keys with
+    # an exact first==last seam (loops cleanly in every runtime); static
+    # poses become a single held key
+    baked: dict[str, dict[str, list]] = {}
+    for bname, chans in ch.items():
+        for cname, f in chans.items():
+            if callable(f):
+                keys = [(round(k * T / FLY_KEYS, 4), f(k * T / FLY_KEYS))
+                        for k in range(FLY_KEYS + 1)]
+                keys[-1] = (keys[-1][0], keys[0][1])
+            else:
+                keys = [(0.0, f)]
+            baked.setdefault(bname, {})[cname] = keys
+    return T, baked
+
+
 # ------------------------------------------------------------------ UV packer
 
 def pack_uvs():
@@ -430,25 +534,33 @@ def _rot_z(v, a):
     return (v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2])
 
 
-def bone_world_transform():
-    """name -> function(point) applying the full parent chain (rest pose)."""
+def bone_world_transform(pose=None):
+    """name -> function(point) applying the full parent chain. `pose` maps
+    bone -> {"rotation": deg_deltas, "position": offset} layered on the rest
+    pose the way animations are (eulers summed per-axis, offset after)."""
     by_name = {b.name: b for b in BONES}
     cache: dict[str, callable] = {}
+    pose = pose or {}
 
     def transform_of(name: str):
         if name in cache:
             return cache[name]
         b = by_name[name]
         parent_fn = transform_of(b.parent) if b.parent else (lambda p: p)
-        rx, ry, rz = (math.radians(a) for a in b.rot)
+        d = pose.get(name, {})
+        dr = d.get("rotation", (0.0, 0.0, 0.0))
+        dp = d.get("position", (0.0, 0.0, 0.0))
+        rx, ry, rz = (math.radians(a + da) for a, da in zip(b.rot, dr))
         px, py, pz = b.pivot
 
-        def fn(p, _parent=parent_fn, _rx=rx, _ry=ry, _rz=rz, _pv=(px, py, pz)):
+        def fn(p, _parent=parent_fn, _rx=rx, _ry=ry, _rz=rz,
+               _pv=(px, py, pz), _dp=dp):
             v = (p[0] - _pv[0], p[1] - _pv[1], p[2] - _pv[2])
             v = _rot_z(v, _rz)
             v = _rot_y(v, _ry)
             v = _rot_x(v, _rx)
-            v = (v[0] + _pv[0], v[1] + _pv[1], v[2] + _pv[2])
+            v = (v[0] + _pv[0] + _dp[0], v[1] + _pv[1] + _dp[1],
+                 v[2] + _pv[2] + _dp[2])
             return _parent(v)
 
         cache[name] = fn
@@ -464,6 +576,36 @@ def bone_world_pivot(name: str):
     return transforms[b.parent](b.pivot) if b.parent else b.pivot
 
 
+# --------------------------------------------------------- animation sampling
+
+def _catmull(p0, p1, p2, p3, f):
+    return 0.5 * (2 * p1 + (p2 - p0) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3)
+                  * f * f + (3 * (p1 - p2) + p3 - p0) * f ** 3)
+
+
+def sample_channel(keys, t, length):
+    """Evaluates a baked channel at time t: uniform catmullrom over the keys,
+    wrapping across the loop seam (keys[-1] duplicates keys[0])."""
+    if len(keys) == 1:
+        return keys[0][1]
+    n = len(keys) - 1
+    u = (t % length) / length * n
+    i0 = int(u)
+    f = u - i0
+    i = i0 % n
+
+    def val(j):
+        return keys[j % n][1]
+
+    return tuple(_catmull(val(i - 1)[k], val(i)[k], val(i + 1)[k],
+                          val(i + 2)[k], f) for k in range(3))
+
+
+def pose_at(channels, t, length):
+    return {b: {c: sample_channel(k, t, length) for c, k in chans.items()}
+            for b, chans in channels.items()}
+
+
 # ------------------------------------------------------------------ renderer
 
 FACES = (  # vertex index quads over the (x,y,z) in {lo,hi} corner ordering
@@ -473,10 +615,12 @@ FACES = (  # vertex index quads over the (x,y,z) in {lo,hi} corner ordering
 )
 
 
-def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None):
+def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
+           pose=None):
     """Orthographic painter's-algorithm render. `center` (world point) recenters
-    and is used for close-ups; without it the model is framed for full body."""
-    transforms = bone_world_transform()
+    and is used for close-ups; without it the model is framed for full body.
+    `pose` applies animation deltas; the image is returned (saved if `path`)."""
+    transforms = bone_world_transform(pose)
     bone_colors = {b.name: b.color for b in BONES}
     yaw, pitch = math.radians(view_yaw), math.radians(view_pitch)
     light = (0.4, 0.8, -0.45)
@@ -523,12 +667,30 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None)
         drw.line([(0, gy), (size[0], gy)], fill=(45, 48, 52), width=1)
     for _, proj, col in polys:
         drw.polygon(proj, fill=col, outline=tuple(int(ch * 0.75) for ch in col))
-    img.save(path)
+    if path:
+        img.save(path)
+    return img
+
+
+def render_fly_previews(v: Variant, channels, length, frames=16):
+    """A looping GIF of the flight cycle + a 4x2 contact sheet of stills."""
+    cam = 2.0 / v.wing_scale ** 0.4  # zoom out for the big-winged builds
+    imgs = [render(35, 16, None, size=(760, 600), scale=cam,
+                   pose=pose_at(channels, k * length / frames, length))
+            for k in range(frames)]
+    imgs[0].save(os.path.join(OUT_DIR, f"{v.name}_fly.gif"), save_all=True,
+                 append_images=imgs[1:], duration=int(length * 1000 / frames),
+                 loop=0)
+    sheet = Image.new("RGB", (4 * 380, 2 * 300))
+    for j in range(8):
+        sheet.paste(imgs[j * 2].resize((380, 300)),
+                    (380 * (j % 4), 300 * (j // 4)))
+    sheet.save(os.path.join(OUT_DIR, f"{v.name}_fly_sheet.png"))
 
 
 # ------------------------------------------------------------------ exports
 
-def export_bbmodel(path, model_name):
+def export_bbmodel(path, model_name, animations=None):
     elements = []
     uuids = {}
     bone_index = {b.name: b for b in BONES}
@@ -577,7 +739,7 @@ def export_bbmodel(path, model_name):
             "locked": False,
             "visibility": True,
             "autouv": 0,
-            "uuid": str(uuid.uuid4()),
+            "uuid": b.uuid,
             "children": list(uuids.get(b.name, [])),
         }
         for child in BONES:
@@ -598,7 +760,77 @@ def export_bbmodel(path, model_name):
         "elements": elements,
         "outliner": roots,
         "textures": [],
-        "animations": [],
+        "animations": animations or [],
+    }
+    with open(path, "w") as f:
+        json.dump(doc, f, indent=1)
+
+
+def bb_animation(name, length, channels):
+    """Blockbench-embedded animation: animators keyed by the bone uuids used
+    in the outliner, one keyframe entry per baked key. Opens ready to play."""
+    uuid_of = {b.name: b.uuid for b in BONES}
+    animators = {}
+    for bname, chans in channels.items():
+        kfs = []
+        for cname, keys in chans.items():
+            interp = "catmullrom" if len(keys) > 1 else "linear"
+            for t, vec in keys:
+                kfs.append({
+                    "channel": cname,
+                    "data_points": [{"x": str(round(vec[0], 3)),
+                                     "y": str(round(vec[1], 3)),
+                                     "z": str(round(vec[2], 3))}],
+                    "uuid": str(uuid.uuid4()),
+                    "time": t,
+                    "color": -1,
+                    "interpolation": interp,
+                })
+        animators[uuid_of[bname]] = {"name": bname, "type": "bone",
+                                     "keyframes": kfs}
+    return {
+        "uuid": str(uuid.uuid4()),
+        "name": name,
+        "loop": "loop",
+        "override": False,
+        "length": round(length, 4),
+        "snapping": 24,
+        "selected": False,
+        "anim_time_update": "",
+        "blend_weight": "",
+        "start_delay": "",
+        "loop_delay": "",
+        "animators": animators,
+    }
+
+
+def export_animation_json(path, name, length, channels):
+    """GeckoLib (bedrock) animation file. Same X-mirror as the geometry
+    export: rotation [x,-y,-z], position [-x,y,z] vs Blockbench space."""
+    bones = {}
+    for bname, chans in channels.items():
+        entry = {}
+        for cname, keys in chans.items():
+            conv = ((lambda p: [p[0], -p[1], -p[2]]) if cname == "rotation"
+                    else (lambda p: [-p[0], p[1], p[2]]))
+            if len(keys) == 1:
+                entry[cname] = [round(x, 3) for x in conv(keys[0][1])]
+            else:
+                entry[cname] = {
+                    f"{t:g}": {"post": [round(x, 3) for x in conv(vec)],
+                               "lerp_mode": "catmullrom"}
+                    for t, vec in keys
+                }
+        bones[bname] = entry
+    doc = {
+        "format_version": "1.8.0",
+        "animations": {
+            name: {
+                "loop": True,
+                "animation_length": round(length, 4),
+                "bones": bones,
+            },
+        },
     }
     with open(path, "w") as f:
         json.dump(doc, f, indent=1)
@@ -657,16 +889,23 @@ def build_variant(v: Variant):
     build_wyvern(v)
     ground_model()
     pack_uvs()
-    export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"), f"wyvern_{v.name}")
+    fly_len, fly = fly_channels(v)
+    export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"),
+                   f"wyvern_{v.name}",
+                   animations=[bb_animation("animation.wyvern.fly", fly_len, fly)])
     export_geo(os.path.join(OUT_DIR, f"wyvern_{v.name}.geo.json"),
                f"geometry.allunderheaven.wyvern_{v.name}")
+    export_animation_json(os.path.join(OUT_DIR, f"wyvern_{v.name}.animation.json"),
+                          "animation.wyvern.fly", fly_len, fly)
     render(35, 18, os.path.join(OUT_DIR, f"{v.name}_three_quarter.png"))
     render(90, 5, os.path.join(OUT_DIR, f"{v.name}_side.png"))
     render(0, 8, os.path.join(OUT_DIR, f"{v.name}_front.png"))
     head = bone_world_pivot("head")
     render(52, 10, os.path.join(OUT_DIR, f"{v.name}_head.png"),
            size=(900, 700), scale=8.5, center=head)
-    print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} head_at="
+    render_fly_previews(v, fly, fly_len)
+    print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
+          f"fly={fly_len:.2f}s head_at="
           f"({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
 
 
