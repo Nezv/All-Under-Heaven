@@ -1,19 +1,27 @@
 """Procedural wyvern model generator for All Under Heaven.
 
-Defines a semirealistic, House-of-the-Dragon-style wyvern (two hind legs,
-wings as forelimbs) as a bone hierarchy + axis-aligned cuboids, then emits:
+Defines semirealistic, House-of-the-Dragon-style wyverns (two hind legs,
+wings as forelimbs) as a bone hierarchy + axis-aligned cuboids, in two
+variants, and emits for each:
 
-  out/wyvern.bbmodel   - Blockbench project (the editable master)
-  out/wyvern.geo.json  - bedrock geometry for GeckoLib (used in a later step)
-  out/preview_*.png    - software-rendered previews for fast iteration
+  out/wyvern_<variant>.bbmodel   - Blockbench project (the editable master)
+  out/wyvern_<variant>.geo.json  - bedrock geometry for GeckoLib (later step)
+  out/<variant>_*.png            - software-rendered previews for iteration
 
-Design rules that keep the model animation-ready:
+Variants:
+  black - near-black hide, oversized wings, purple eyes
+  white - ivory hide, elongated 5-segment neck, white eyes (dark sockets)
+
+Design rules that keep the models animation-ready:
   * All rest-pose orientation lives on BONES (groups), not cubes, so GeckoLib
     keyframes rotate the same pivots Blockbench shows.
+  * Child pivots are authored UNROTATED (Blockbench semantics: a parent's
+    rest rotation carries its children) - chains advance in straight steps
+    and curves come purely from nested bone rotations.
   * Bones prefer a single rotation axis in rest pose; multi-axis rotations
     (wings) keep angles modest so euler-order differences stay invisible.
   * The wyvern faces NORTH (-Z), vanilla entity convention: head -Z, tail +Z.
-  * 16 units = 1 block. Ground is y=0.
+  * 16 units = 1 block. Ground is y=0 (toes auto-grounded after build).
 
 Run:  python build_dragon.py
 """
@@ -50,11 +58,76 @@ class Cube:
     hi: tuple[float, float, float]
     inflate: float = 0.0
     mirror: bool = False
+    color: tuple[int, int, int] | None = None  # preview override (else bone color)
     uv: tuple[int, int] = (0, 0)  # filled by the packer
 
 
+@dataclass
+class Variant:
+    name: str
+    hide: tuple[int, int, int]
+    hide_dark: tuple[int, int, int]
+    membrane: tuple[int, int, int]
+    horn: tuple[int, int, int]
+    ridge: tuple[int, int, int]
+    eye: tuple[int, int, int]
+    socket: tuple[int, int, int]
+    teeth: tuple[int, int, int]
+    wing_scale: float = 1.0
+    #          (yaw from straight-out, length) per finger spar
+    fingers: tuple = ((14, 46), (38, 44), (66, 38))
+    tail_scale: float = 1.0
+    girth: float = 1.0        # body width multiplier (ethereal = slim)
+    whiskers: bool = False    # trailing snout barbels
+    #             (pitch, length, width, height) per neck segment
+    neck: tuple = ((34, 13, 13, 12), (16, 12, 11, 11), (-6, 12, 10, 10), (-20, 12, 8.5, 9))
+
+
+BLACK = Variant(
+    # Grandiose: oversized four-fingered wings dominate the silhouette.
+    name="black",
+    hide=(42, 42, 48), hide_dark=(30, 30, 36),
+    membrane=(70, 52, 88),          # smoky violet membranes
+    horn=(118, 112, 126), ridge=(56, 54, 66),
+    eye=(178, 82, 255), socket=(14, 12, 18),
+    teeth=(198, 192, 184),
+    wing_scale=1.3,
+    fingers=((10, 48), (30, 46), (50, 42), (70, 36)),
+)
+
+WHITE = Variant(
+    # Ethereal: slim, elongated (5-segment neck, long tail), snout whiskers.
+    name="white",
+    hide=(226, 228, 232), hide_dark=(198, 202, 210),
+    membrane=(216, 196, 202),       # pale rose membranes
+    horn=(240, 236, 224), ridge=(206, 210, 218),
+    eye=(248, 248, 255), socket=(58, 52, 60),
+    teeth=(214, 206, 188),
+    wing_scale=1.0,
+    tail_scale=1.2,
+    girth=0.9,
+    whiskers=True,
+    neck=((30, 13, 13, 12), (18, 12, 11.5, 11), (2, 12, 10.5, 10),
+          (-14, 12, 9.5, 9.5), (-22, 11, 8.5, 9)),
+)
+
+RED = Variant(
+    # The baseline wyvern: classic brick-red hide, amber eyes, stock build.
+    name="red",
+    hide=(146, 46, 38), hide_dark=(106, 30, 26),
+    membrane=(168, 86, 60),         # warm sunset membranes
+    horn=(216, 206, 186), ridge=(92, 26, 22),
+    eye=(255, 178, 48), socket=(28, 10, 8),
+    teeth=(226, 218, 202),
+)
+
 BONES: list[Bone] = []
 CUBES: list[Cube] = []
+
+
+def reset():
+    BONES.clear()
+    CUBES.clear()
 
 
 def bone(name, parent, pivot, rot=(0, 0, 0), color=(140, 140, 140)):
@@ -62,112 +135,157 @@ def bone(name, parent, pivot, rot=(0, 0, 0), color=(140, 140, 140)):
     return name
 
 
-def cube(bone_name, center, size, inflate=0.0, mirror=False):
+def cube(bone_name, center, size, inflate=0.0, mirror=False, color=None):
     """Axis-aligned cube from center + size (pre-bone-rotation)."""
     cx, cy, cz = center
     sx, sy, sz = size
     CUBES.append(Cube(bone_name, (cx - sx / 2, cy - sy / 2, cz - sz / 2),
-                      (cx + sx / 2, cy + sy / 2, cz + sz / 2), inflate, mirror))
+                      (cx + sx / 2, cy + sy / 2, cz + sz / 2), inflate, mirror, color))
 
 
 # ------------------------------------------------------------ wyvern anatomy
-# Palette (preview only): keeps parts readable in renders.
-HIDE = (96, 108, 96)        # body scales: grey-green
-HIDE_D = (78, 88, 78)       # darker hide (legs, tail underside)
-MEMBRANE = (140, 84, 84)    # wing membrane: dull red
-HORN = (196, 188, 168)      # bone/horn
-RIDGE = (70, 78, 70)        # spine ridges
+
+def build_head(parent: str, tip: tuple[float, float, float], neck_pitch_sum: float, v: Variant):
+    """Predatory head: layered skull, hooded brow over inset eyes, tapering
+    down-angled snout with a hooked tip, parted fanged jaw, cheek flares and
+    swept horns. Small sub-bones carry the angles so nothing is a plain box
+    stack, and the jaw/head stay animatable."""
+    head = bone("head", parent, tip, rot=(-neck_pitch_sum, 0, 0), color=v.hide)
+    hx, hy, hz = tip
+
+    # skull core + rear crest fin
+    cube(head, (hx, hy + 1.6, hz - 4.5), (8.6, 7.6, 11))
+    crest = bone("head_crest", head, (hx, hy + 5.2, hz - 1), rot=(-34, 0, 0), color=v.ridge)
+    cube(crest, (hx, hy + 6.4, hz + 2.5), (1.2, 4.4, 8))
+
+    # hooded brow: a ledge wider than the skull, dipping down DIRECTLY over
+    # the eye line so the eyes sit in shadow — the predatory stare.
+    brow = bone("brow", head, (hx, hy + 4.8, hz - 7.5), rot=(-12, 0, 0), color=v.hide_dark)
+    cube(brow, (hx, hy + 5.1, hz - 8.6), (9.0, 2.0, 5.6))
+
+    # eyes: dark socket rims with proud, bright eye cubes (variant color)
+    for sx in (1, -1):
+        cube(head, (4.0 * sx + hx, hy + 3.3, hz - 7.2), (1.1, 3.0, 3.6), color=v.socket)
+        cube(head, (4.5 * sx + hx, hy + 3.3, hz - 7.2), (0.8, 2.2, 2.8), color=v.eye)
+
+    # snout: slight droop, ridge on top, hooked tip
+    snout = bone("snout", head, (hx, hy + 2.4, hz - 10), rot=(-5, 0, 0), color=v.hide)
+    cube(snout, (hx, hy + 2.9, hz - 15.3), (5.4, 3.6, 11.5))
+    cube(snout, (hx, hy + 4.8, hz - 14), (2.6, 1.2, 8))
+    tip_b = bone("snout_tip", snout, (hx, hy + 2.4, hz - 20.5), rot=(-12, 0, 0), color=v.hide)
+    cube(tip_b, (hx, hy + 2.4, hz - 22.6), (4.4, 3.2, 5.2))
+    cube(tip_b, (hx, hy + 1.1, hz - 24.3), (3.2, 1.8, 2.4))          # hooked tip
+    for sx in (1, -1):
+        cube(tip_b, (1.4 * sx + hx, hy + 4.0, hz - 23.2), (1.0, 0.8, 1.8),
+             color=v.hide_dark)                                       # nostrils
+        # long front fangs off the tip, the wolf-teeth of the profile
+        cube(tip_b, (1.5 * sx + hx, hy + 0.4, hz - 23.4), (0.7, 2.2, 0.8),
+             color=v.teeth)
+
+    # ethereal variants: thin whisker barbels trailing back off the snout,
+    # drooping in two segments past the jaw line
+    if v.whiskers:
+        for side, sx in (("l", 1), ("r", -1)):
+            w1 = bone(f"whisker_{side}_1", tip_b, (2.4 * sx + hx, hy + 1.8, hz - 21.5),
+                      rot=(10, 34 * sx, 0), color=v.horn)
+            cube(w1, (2.4 * sx + hx, hy + 1.8, hz - 17), (0.6, 0.6, 10))
+            w2 = bone(f"whisker_{side}_2", w1, (2.4 * sx + hx, hy + 1.8, hz - 12),
+                      rot=(18, 10 * sx, 0), color=v.horn)
+            cube(w2, (2.4 * sx + hx, hy + 1.8, hz - 7.5), (0.45, 0.45, 10))
+
+    # discrete upper fangs along the lip line (not a strip — actual teeth)
+    for sx in (1, -1):
+        for fz, fh in ((-12.6, 1.3), (-15.2, 1.5), (-17.6, 1.2)):
+            cube(snout, (2.25 * sx + hx, hy + 0.6, hz + fz), (0.6, fh, 0.8),
+                 color=v.teeth)
+
+    # parted lower jaw: dark mouth shadow, upward teeth, chin
+    jaw = bone("jaw", head, (hx, hy - 0.9, hz - 2), rot=(-13, 0, 0), color=v.hide_dark)
+    cube(jaw, (hx, hy - 1.7, hz - 10.8), (4.6, 2.2, 16))
+    cube(jaw, (hx, hy - 0.35, hz - 10.5), (3.8, 1.1, 13), color=(42, 16, 18))
+    for sx in (1, -1):
+        for fz in (-13.6, -16.4):
+            cube(jaw, (1.85 * sx + hx, hy - 0.1, hz + fz), (0.55, 1.2, 0.7),
+                 color=v.teeth)
+    cube(jaw, (hx, hy - 2.3, hz - 19.3), (3.4, 1.8, 3))
+
+    # cheek flares: thin plates yawed outward for an angular skull
+    for side, sx in (("l", 1), ("r", -1)):
+        flare = bone(f"cheek_{side}", head, (4.2 * sx + hx, hy + 2, hz + 0.5),
+                     rot=(0, 26 * sx, 0), color=v.hide_dark)
+        cube(flare, (4.6 * sx + hx, hy + 1.8, hz + 3.8), (0.8, 5, 7.5), mirror=sx < 0)
+
+    # horns: two segments each, swept back and out
+    for side, sx in (("l", 1), ("r", -1)):
+        h1 = bone(f"horn_{side}_1", head, (3.0 * sx + hx, hy + 5.2, hz + 0.5),
+                  rot=(-26, -14 * sx, 0), color=v.horn)
+        cube(h1, (3.0 * sx + hx, hy + 5.2, hz + 5.5), (2.2, 2.2, 11))
+        h2 = bone(f"horn_{side}_2", h1, (3.0 * sx + hx, hy + 5.2, hz + 11),
+                  rot=(-16, 0, 0), color=v.horn)
+        cube(h2, (3.0 * sx + hx, hy + 5.2, hz + 15.5), (1.4, 1.4, 10))
 
 
-def build_wyvern():
+def build_wyvern(v: Variant):
     root = bone("root", None, (0, 0, 0))
 
-    # --- body: chest (deep) + abdomen (narrower), back line sloping down ---
-    body = bone("body", root, (0, 26, 4), color=HIDE)
-    cube(body, (0, 25, -12), (22, 20, 26))           # chest
-    cube(body, (0, 24, 10), (18, 16, 22))            # abdomen
-    cube(body, (0, 16.5, -12), (14, 5, 22))          # keel / belly line
+    # --- body: chest (deep) + abdomen (narrower), keel below ---
+    g = v.girth
+    body = bone("body", root, (0, 26, 4), color=v.hide)
+    cube(body, (0, 25, -12), (22 * g, 20, 26))       # chest
+    cube(body, (0, 24, 10), (18 * g, 16, 22))        # abdomen
+    cube(body, (0, 16.5, -12), (14 * g, 5, 22))      # keel / belly line
 
-    # --- neck: 4 chained segments arcing up, tapering 13 -> 8 ---
-    # Child pivots are authored UNROTATED (Blockbench semantics: a parent's
-    # rest rotation carries its children), so the chain advances in straight
-    # -Z steps and the S-curve comes purely from the nested bone rotations.
-    neck_specs = [  # (pitch deg [+ lifts the head-ward end], length, w, h)
-        (34, 13, 13, 12),
-        (16, 12, 11, 11),
-        (-6, 12, 10, 10),
-        (-20, 12, 8.5, 9),
-    ]
+    # --- neck: chained segments arcing up (variant-specific S curve) ---
     parent = body
     tip = (0.0, 30.0, -24.0)  # neck root at front of chest
-    for i, (pitch, length, w, h) in enumerate(neck_specs, 1):
-        name = bone(f"neck{i}", parent, tip, rot=(pitch, 0, 0), color=HIDE)
-        # segment cube sits from the pivot toward -Z (head-ward)
+    for i, (pitch, length, w, h) in enumerate(v.neck, 1):
+        name = bone(f"neck{i}", parent, tip, rot=(pitch, 0, 0), color=v.hide)
         cube(name, (tip[0], tip[1] + 0.5, tip[2] - length / 2), (w, h, length + 2))
-        # ridge fin on top of each neck segment
-        cube(name, (tip[0], tip[1] + h / 2 + 1.2, tip[2] - length / 2), (1.4, 3.2, length - 3))
+        cube(name, (tip[0], tip[1] + h / 2 + 1.2, tip[2] - length / 2),
+             (1.4, 3.2, length - 3), color=v.ridge)
         tip = (tip[0], tip[1], tip[2] - length)
         parent = name
 
-    # --- head: skull + brow + tapering snout + jaw + horns + cheek frills ---
-    # Own pitch cancels the accumulated neck arc so the head sits level.
-    head = bone("head", parent, tip, rot=(-24, 0, 0), color=HIDE)
-    hx, hy, hz = tip
-    cube(head, (hx, hy + 1.5, hz - 5), (9, 8, 12))            # skull
-    cube(head, (hx, hy + 4.6, hz - 8), (7.6, 2.6, 7))         # brow ledge
-    cube(head, (hx, hy + 2.2, hz - 15), (6, 4.4, 12))         # snout upper
-    cube(head, (hx, hy - 0.6, hz - 14.4), (5.2, 2.2, 10.6))   # snout lower lip line
-    jaw = bone("jaw", head, (hx, hy - 1.6, hz - 2), rot=(-14, 0, 0), color=HIDE_D)
-    cube(jaw, (hx, hy - 2.6, hz - 12), (4.8, 2.4, 15))        # lower jaw (slightly open)
-    # horns: two segments each, swept back and out (shallow HotD sweep)
-    for side, sx in (("l", 1), ("r", -1)):
-        h1 = bone(f"horn_{side}_1", head, (hx + 3.2 * sx, hy + 5, hz + 0.5),
-                  rot=(-26, -14 * sx, 0), color=HORN)
-        cube(h1, (hx + 3.2 * sx, hy + 5, hz + 5.5), (2.2, 2.2, 11))
-        h2 = bone(f"horn_{side}_2", h1, (hx + 3.2 * sx, hy + 5, hz + 11),
-                  rot=(-16, 0, 0), color=HORN)
-        cube(h2, (hx + 3.2 * sx, hy + 5, hz + 15.5), (1.4, 1.4, 10))
-        # cheek frill
-        cube(head, (hx + 4.8 * sx, hy + 1.5, hz + 1.5), (0.8, 5, 6), mirror=sx < 0)
+    build_head(parent, tip, sum(s[0] for s in v.neck), v)
 
-    # --- wings: humerus -> forearm -> hand with 3 finger spars + membranes ---
+    # --- wings: humerus -> forearm -> hand, finger spars + membranes ---
     # Built for the LEFT (+X) side, mirrored programmatically for the right.
+    ws = v.wing_scale
+
     def build_wing(side: str, sx: int):
         sh = (11 * sx, 31.0, -16.0)  # shoulder
         arm = bone(f"wing_{side}_arm", "body", sh,
-                   rot=(0, 14 * sx, 20 * sx), color=HIDE)
-        cube(arm, (sh[0] + 11 * sx, sh[1], sh[2]), (22, 4.6, 4.6))
-        elbow = (sh[0] + 21 * sx, sh[1], sh[2])
+                   rot=(0, 14 * sx, 20 * sx), color=v.hide)
+        cube(arm, (sh[0] + 11 * ws * sx, sh[1], sh[2]), (22 * ws, 4.6, 4.6))
+        elbow = (sh[0] + 21 * ws * sx, sh[1], sh[2])
         fore = bone(f"wing_{side}_fore", arm, elbow,
-                    rot=(0, -18 * sx, -12 * sx), color=HIDE)
-        cube(fore, (elbow[0] + 13 * sx, elbow[1], elbow[2]), (27, 3.6, 3.6))
-        wrist = (elbow[0] + 26 * sx, elbow[1], elbow[2])
-        hand = bone(f"wing_{side}_hand", fore, wrist, rot=(0, 0, 0), color=HIDE)
+                    rot=(0, -18 * sx, -12 * sx), color=v.hide)
+        cube(fore, (elbow[0] + 13 * ws * sx, elbow[1], elbow[2]), (27 * ws, 3.6, 3.6))
+        wrist = (elbow[0] + 26 * ws * sx, elbow[1], elbow[2])
+        hand = bone(f"wing_{side}_hand", fore, wrist, rot=(0, 0, 0), color=v.hide)
         cube(hand, (wrist[0] + 2.5 * sx, wrist[1], wrist[2]), (6, 3.2, 3.2))
         # small wing claw hooking forward off the wrist
-        cube(hand, (wrist[0] + 2 * sx, wrist[1] + 1, wrist[2] - 3.4), (1.6, 1.6, 5))
-        # finger spars fan backward (+Z), thin; membranes hang as thin plates
-        fingers = [  # (yaw from straight-out, length)
-            (14, 46),
-            (38, 44),
-            (66, 38),
-        ]
+        cube(hand, (wrist[0] + 2 * sx, wrist[1] + 1, wrist[2] - 3.4), (1.6, 1.6, 5),
+             color=v.horn)
+        # finger spars fan backward (+Z); membranes trail as thin plates
         base = (wrist[0] + 5 * sx, wrist[1], wrist[2])
-        for fi, (yaw, length) in enumerate(fingers, 1):
+        finger_count = len(v.fingers)
+        for fi, (yaw, raw_len) in enumerate(v.fingers, 1):
+            length = raw_len * ws
             fname = bone(f"wing_{side}_finger{fi}", hand, base,
-                         rot=(0, -yaw * sx, 0), color=HIDE_D)
+                         rot=(0, -yaw * sx, 0), color=v.hide_dark)
             cube(fname, (base[0] + (length / 2) * sx, base[1], base[2]),
                  (length, 2.0, 2.0))
-            # membrane plate trailing this spar (thin in Y, sits just behind)
             mem_len = length - 4
-            mem_depth = 22 if fi < 3 else 17
+            mem_depth = (22 if fi < finger_count else 17) * ws
             mname = bone(f"wing_{side}_mem{fi}", fname, base, rot=(0, 0, 0),
-                         color=MEMBRANE)
+                         color=v.membrane)
             cube(mname, (base[0] + (mem_len / 2 + 2) * sx, base[1] - 0.4,
                          base[2] + mem_depth / 2 + 1.2), (mem_len, 0.6, mem_depth))
         # armpit membrane between forearm and body
-        mroot = bone(f"wing_{side}_mem0", fore, elbow, color=MEMBRANE)
-        cube(mroot, (elbow[0] + 12 * sx, elbow[1] - 1.2, elbow[2] + 8.5), (24, 0.6, 14))
+        mroot = bone(f"wing_{side}_mem0", fore, elbow, color=v.membrane)
+        cube(mroot, (elbow[0] + 12 * ws * sx, elbow[1] - 1.2, elbow[2] + 8.5),
+             (24 * ws, 0.6, 14))
 
     build_wing("l", 1)
     build_wing("r", -1)
@@ -176,19 +294,21 @@ def build_wyvern():
     def build_leg(side: str, sx: int):
         hip = (9.5 * sx, 24.0, 12.0)
         # Digitigrade: femur forward-down, tibia back-down, foot near-vertical.
-        thigh = bone(f"leg_{side}_thigh", "body", hip, rot=(28, 0, 0), color=HIDE_D)
+        thigh = bone(f"leg_{side}_thigh", "body", hip, rot=(28, 0, 0), color=v.hide_dark)
         cube(thigh, (hip[0], hip[1] - 6.5, hip[2] + 1), (7.5, 15, 10))
         knee = (hip[0], hip[1] - 12, hip[2] + 6)
-        shin = bone(f"leg_{side}_shin", thigh, knee, rot=(-46, 0, 0), color=HIDE_D)
+        shin = bone(f"leg_{side}_shin", thigh, knee, rot=(-46, 0, 0), color=v.hide_dark)
         cube(shin, (knee[0], knee[1] - 6, knee[2] - 1.5), (5, 13, 6))
         ankle = (knee[0], knee[1] - 11.5, knee[2] - 4)
-        foot = bone(f"leg_{side}_foot", shin, ankle, rot=(18, 0, 0), color=HIDE_D)
+        foot = bone(f"leg_{side}_foot", shin, ankle, rot=(18, 0, 0), color=v.hide_dark)
         cube(foot, (ankle[0], ankle[1] - 4, ankle[2] - 1), (4.6, 8.5, 5))
         toes = bone(f"leg_{side}_toes", foot, (ankle[0], ankle[1] - 8, ankle[2] - 2),
-                    color=HIDE_D)
+                    color=v.hide_dark)
         for ti, tox in enumerate((-1.8, 0.0, 1.8)):
             cube(toes, (ankle[0] + tox * sx, ankle[1] - 8 + 1.2, ankle[2] - 5.5),
                  (1.8, 2.4, 8))
+            cube(toes, (ankle[0] + tox * sx, ankle[1] - 8 + 0.8, ankle[2] - 10),
+                 (1.2, 1.4, 2.4), color=v.horn)  # claws
 
     build_leg("l", 1)
     build_leg("r", -1)
@@ -205,21 +325,21 @@ def build_wyvern():
     ]
     parent = "body"
     tip = (0.0, 26.0, 20.0)
-    for i, (pitch, length, w, h) in enumerate(tail_specs, 1):
-        name = bone(f"tail{i}", parent, tip, rot=(pitch, 0, 0), color=HIDE)
+    for i, (pitch, raw_len, w, h) in enumerate(tail_specs, 1):
+        length = raw_len * v.tail_scale
+        name = bone(f"tail{i}", parent, tip, rot=(pitch, 0, 0), color=v.hide)
         cube(name, (tip[0], tip[1], tip[2] + length / 2), (w, h, length + 2))
         if i <= 5:  # spine ridges fade out toward the tip
             cube(name, (tip[0], tip[1] + h / 2 + 1.1, tip[2] + length / 2),
-                 (1.2, 2.6, length - 4))
+                 (1.2, 2.6, length - 4), color=v.ridge)
         tip = (tip[0], tip[1], tip[2] + length)
         parent = name
-    # tail tip fin (vertical blade)
-    fin = bone("tail_fin", parent, tip, color=MEMBRANE)
+    fin = bone("tail_fin", parent, tip, color=v.membrane)
     cube(fin, (tip[0], tip[1] + 1, tip[2] + 4), (0.8, 7, 10))
 
     # --- back ridges along the spine ---
     for rz, ry in ((-20, 36.2), (-13, 36.6), (-6, 36.6), (1, 36.2), (8, 34.4), (15, 33.4)):
-        cube("body", (0, ry, rz), (1.6, 3.4, 5.4))
+        cube("body", (0, ry, rz), (1.6, 3.4, 5.4), color=v.ridge)
 
 
 def ground_model():
@@ -252,7 +372,7 @@ def ground_model():
 # ------------------------------------------------------------------ UV packer
 
 def pack_uvs():
-    """Shelf-packs box UVs onto the 256x256 sheet, biggest cubes first."""
+    """Shelf-packs box UVs onto the sheet, biggest cubes first."""
     order = sorted(range(len(CUBES)), key=lambda i: -(
         _uv_w(CUBES[i]) * _uv_h(CUBES[i])))
     x = y = shelf_h = 0
@@ -327,22 +447,37 @@ def bone_world_transform():
     return {b.name: transform_of(b.name) for b in BONES}
 
 
+def bone_world_pivot(name: str):
+    by_name = {b.name: b for b in BONES}
+    transforms = bone_world_transform()
+    b = by_name[name]
+    return transforms[b.parent](b.pivot) if b.parent else b.pivot
+
+
 # ------------------------------------------------------------------ renderer
 
-FACES = (  # vertex indices per face + outward normal (axis-aligned, pre-rotation)
+FACES = (  # vertex index quads over the (x,y,z) in {lo,hi} corner ordering
     ((0, 1, 3, 2), (-1, 0, 0)), ((4, 6, 7, 5), (1, 0, 0)),
     ((0, 4, 5, 1), (0, -1, 0)), ((2, 3, 7, 6), (0, 1, 0)),
     ((0, 2, 6, 4), (0, 0, -1)), ((1, 5, 7, 3), (0, 0, 1)),
 )
 
 
-def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0):
+def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None):
+    """Orthographic painter's-algorithm render. `center` (world point) recenters
+    and is used for close-ups; without it the model is framed for full body."""
     transforms = bone_world_transform()
-    colors = {b.name: b.color for b in BONES}
+    bone_colors = {b.name: b.color for b in BONES}
     yaw, pitch = math.radians(view_yaw), math.radians(view_pitch)
     light = (0.4, 0.8, -0.45)
     ll = math.sqrt(sum(c * c for c in light))
     light = tuple(c / ll for c in light)
+
+    if center is not None:
+        c_view = _rot_x(_rot_y(center, yaw), pitch)
+        anchor = (size[0] / 2 - c_view[0] * scale, size[1] * 0.5 + c_view[1] * scale)
+    else:
+        anchor = (size[0] / 2, size[1] * 0.62)
 
     polys = []
     for c in CUBES:
@@ -351,10 +486,9 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0):
         hi = (c.hi[0] + c.inflate, c.hi[1] + c.inflate, c.hi[2] + c.inflate)
         verts = [fn((x, y, z)) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                  for z in (lo[2], hi[2])]
-        base = colors[c.bone]
-        for idx, normal in FACES:
+        base = c.color if c.color is not None else bone_colors[c.bone]
+        for idx, _ in FACES:
             pts = [verts[i] for i in idx]
-            # world normal ~ rotated normal: approximate from the polygon
             ux = tuple(pts[1][k] - pts[0][k] for k in range(3))
             vx = tuple(pts[3][k] - pts[0][k] for k in range(3))
             n = (ux[1] * vx[2] - ux[2] * vx[1], ux[2] * vx[0] - ux[0] * vx[2],
@@ -366,29 +500,28 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0):
             proj = []
             depth = 0.0
             for p in pts:
-                v = _rot_y(p, yaw)
-                v = _rot_x(v, pitch)
-                proj.append((size[0] / 2 + v[0] * scale,
-                             size[1] * 0.62 - v[1] * scale))
-                depth += v[2]
+                vv = _rot_x(_rot_y(p, yaw), pitch)
+                proj.append((anchor[0] + vv[0] * scale, anchor[1] - vv[1] * scale))
+                depth += vv[2]
             polys.append((depth / 4, proj, col))
 
     polys.sort(key=lambda t: -t[0])  # painter's: farthest first
     img = Image.new("RGB", size, (24, 26, 30))
     drw = ImageDraw.Draw(img)
-    # ground line
-    gy = size[1] * 0.62
-    drw.line([(0, gy), (size[0], gy)], fill=(45, 48, 52), width=1)
+    if center is None:
+        gy = size[1] * 0.62
+        drw.line([(0, gy), (size[0], gy)], fill=(45, 48, 52), width=1)
     for _, proj, col in polys:
-        drw.polygon(proj, fill=col, outline=tuple(int(c * 0.75) for c in col))
+        drw.polygon(proj, fill=col, outline=tuple(int(ch * 0.75) for ch in col))
     img.save(path)
 
 
 # ------------------------------------------------------------------ exports
 
-def export_bbmodel(path):
+def export_bbmodel(path, model_name):
     elements = []
     uuids = {}
+    bone_index = {b.name: b for b in BONES}
     for i, c in enumerate(CUBES):
         eid = str(uuid.uuid4())
         uuids.setdefault(c.bone, []).append(eid)
@@ -413,7 +546,7 @@ def export_bbmodel(path):
             "to": list(c.hi),
             "autouv": 0,
             "color": i % 8,
-            "origin": list(BONES[[b.name for b in BONES].index(c.bone)].pivot),
+            "origin": list(bone_index[c.bone].pivot),
             "uv_offset": [u, v],
             "inflate": c.inflate,
             "mirror_uv": c.mirror,
@@ -446,8 +579,8 @@ def export_bbmodel(path):
     doc = {
         "meta": {"format_version": "4.5", "model_format": "animated_entity_model",
                  "box_uv": True},
-        "name": "wyvern",
-        "model_identifier": "wyvern",
+        "name": model_name,
+        "model_identifier": model_name,
         "visible_box": [1, 1, 0],
         "variable_placeholders": "",
         "variable_placeholder_buttons": [],
@@ -461,7 +594,7 @@ def export_bbmodel(path):
         json.dump(doc, f, indent=1)
 
 
-def export_geo(path):
+def export_geo(path, identifier):
     """Bedrock geometry for GeckoLib. Bedrock mirrors X vs Blockbench space."""
     bones_json = []
     cubes_by_bone: dict[str, list[Cube]] = {}
@@ -493,7 +626,7 @@ def export_geo(path):
         "format_version": "1.12.0",
         "minecraft:geometry": [{
             "description": {
-                "identifier": "geometry.allunderheaven.wyvern",
+                "identifier": identifier,
                 "texture_width": TEX_W,
                 "texture_height": TEX_H,
                 "visible_bounds_width": 24,
@@ -509,16 +642,26 @@ def export_geo(path):
 
 # ---------------------------------------------------------------------- main
 
-if __name__ == "__main__":
-    os.makedirs(OUT_DIR, exist_ok=True)
-    build_wyvern()
+def build_variant(v: Variant):
+    reset()
+    build_wyvern(v)
     ground_model()
     pack_uvs()
-    export_bbmodel(os.path.join(OUT_DIR, "wyvern.bbmodel"))
-    export_geo(os.path.join(OUT_DIR, "wyvern.geo.json"))
-    render(35, 18, os.path.join(OUT_DIR, "preview_three_quarter.png"))
-    render(90, 5, os.path.join(OUT_DIR, "preview_side.png"))
-    render(0, 8, os.path.join(OUT_DIR, "preview_front.png"))
-    render(30, 55, os.path.join(OUT_DIR, "preview_top.png"))
-    print(f"bones={len(BONES)} cubes={len(CUBES)}")
+    export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"), f"wyvern_{v.name}")
+    export_geo(os.path.join(OUT_DIR, f"wyvern_{v.name}.geo.json"),
+               f"geometry.allunderheaven.wyvern_{v.name}")
+    render(35, 18, os.path.join(OUT_DIR, f"{v.name}_three_quarter.png"))
+    render(90, 5, os.path.join(OUT_DIR, f"{v.name}_side.png"))
+    render(0, 8, os.path.join(OUT_DIR, f"{v.name}_front.png"))
+    head = bone_world_pivot("head")
+    render(52, 10, os.path.join(OUT_DIR, f"{v.name}_head.png"),
+           size=(900, 700), scale=8.5, center=head)
+    print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} head_at="
+          f"({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
+
+
+if __name__ == "__main__":
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for variant in (RED, BLACK, WHITE):
+        build_variant(variant)
     print("wrote", OUT_DIR)
