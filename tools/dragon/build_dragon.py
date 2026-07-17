@@ -81,17 +81,19 @@ class Variant:
     whiskers: bool = False    # trailing snout barbels
     #             (pitch, length, width, height) per neck segment
     neck: tuple = ((34, 13, 13, 12), (16, 12, 11, 11), (-6, 12, 10, 10), (-20, 12, 8.5, 9))
+    #             (pitch, length, width, height) per tail segment (None = stock)
+    tail: tuple | None = None
 
 
 BLACK = Variant(
     # Grandiose: oversized four-fingered wings dominate the silhouette.
     name="black",
     hide=(42, 42, 48), hide_dark=(30, 30, 36),
-    membrane=(70, 52, 88),          # smoky violet membranes
+    membrane=(84, 84, 92),          # storm-grey membranes
     horn=(118, 112, 126), ridge=(56, 54, 66),
-    eye=(178, 82, 255), socket=(14, 12, 18),
+    eye=(196, 198, 206), socket=(14, 12, 18),
     teeth=(198, 192, 184),
-    wing_scale=1.3,
+    wing_scale=1.69,                # 1.3 base, then +30% per request
     fingers=((10, 48), (30, 46), (50, 42), (70, 36)),
 )
 
@@ -104,11 +106,19 @@ WHITE = Variant(
     eye=(248, 248, 255), socket=(58, 52, 60),
     teeth=(214, 206, 188),
     wing_scale=1.0,
-    tail_scale=1.2,
     girth=0.9,
     whiskers=True,
-    neck=((30, 13, 13, 12), (18, 12, 11.5, 11), (2, 12, 10.5, 10),
-          (-14, 12, 9.5, 9.5), (-22, 11, 8.5, 9)),
+    # 7-segment neck: same root (13x12) and tip (8.5x9) girth as the stock
+    # neck, sizes interpolated between - only the length grows. Pitch sum
+    # stays 14 so the head carries the same rest angle.
+    neck=((26, 13, 13, 12), (20, 12, 12.25, 11.5), (12, 12, 11.5, 11),
+          (2, 12, 10.75, 10.5), (-8, 12, 10, 10), (-16, 12, 9.25, 9.5),
+          (-22, 11, 8.5, 9)),
+    # 9-segment tail: same root (12x11) and tip (2.4x2.4) as stock, evenly
+    # tapered across the extra nodes. Pitch sum stays -4 (droop then upcurve).
+    tail=((14, 15, 12, 11), (10, 15, 10.8, 9.9), (6, 15, 9.6, 8.8),
+          (2, 16, 8.4, 7.7), (-3, 16, 7.2, 6.6), (-7, 16, 6, 5.5),
+          (-9, 16, 4.8, 4.4), (-9, 17, 3.6, 3.4), (-8, 18, 2.4, 2.4)),
 )
 
 RED = Variant(
@@ -313,8 +323,8 @@ def build_wyvern(v: Variant):
     build_leg("l", 1)
     build_leg("r", -1)
 
-    # --- tail: 7 chained segments, tapering, gentle droop then upcurve ---
-    tail_specs = [  # (pitch, length, width, height)
+    # --- tail: chained segments, tapering, gentle droop then upcurve ---
+    tail_specs = v.tail or (  # (pitch, length, width, height)
         (14, 15, 12, 11),
         (8, 15, 10, 9.5),
         (4, 16, 8, 8),
@@ -322,14 +332,14 @@ def build_wyvern(v: Variant):
         (-8, 16, 5, 5),
         (-10, 17, 3.6, 3.6),
         (-8, 18, 2.4, 2.4),
-    ]
+    )
     parent = "body"
     tip = (0.0, 26.0, 20.0)
     for i, (pitch, raw_len, w, h) in enumerate(tail_specs, 1):
         length = raw_len * v.tail_scale
         name = bone(f"tail{i}", parent, tip, rot=(pitch, 0, 0), color=v.hide)
         cube(name, (tip[0], tip[1], tip[2] + length / 2), (w, h, length + 2))
-        if i <= 5:  # spine ridges fade out toward the tip
+        if i <= len(tail_specs) - 2:  # spine ridges fade out toward the tip
             cube(name, (tip[0], tip[1] + h / 2 + 1.1, tip[2] + length / 2),
                  (1.2, 2.6, length - 4), color=v.ridge)
         tip = (tip[0], tip[1], tip[2] + length)
