@@ -5,11 +5,12 @@ wings as forelimbs) as a bone hierarchy + axis-aligned cuboids, in three
 variants, and emits for each:
 
   out/wyvern_<variant>.bbmodel        - Blockbench project (editable master,
-                                        flight animation embedded + playable)
+                                        texture + animations embedded)
+  out/wyvern_<variant>.png            - painted 1024x1024 texture sheet
   out/wyvern_<variant>.geo.json       - bedrock geometry for GeckoLib
-  out/wyvern_<variant>.animation.json - GeckoLib flight animation
+  out/wyvern_<variant>.animation.json - GeckoLib flight animations
   out/<variant>_*.png                 - software-rendered preview stills
-  out/<variant>_fly.gif / _fly_sheet.png - animated flight preview + stills
+  out/<variant>_fly*.gif / *_sheet.png - animated cycle previews
 
 Variants:
   red   - baseline: brick hide, amber eyes, stock proportions
@@ -32,16 +33,20 @@ Run:  python build_dragon.py
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
+import random
 import uuid
 from dataclasses import dataclass, field
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
-TEX_W, TEX_H = 512, 512
+TEX_W, TEX_H = 1024, 1024
+TEXEL = 2   # texture pixels per model unit (per-face UV, not box UV)
+UV_PAD = 2  # gutter between UV islands so painted detail can't bleed
 
 # ---------------------------------------------------------------- model data
 
@@ -78,6 +83,7 @@ class Variant:
     eye: tuple[int, int, int]
     socket: tuple[int, int, int]
     teeth: tuple[int, int, int]
+    belly: tuple[int, int, int] = (200, 170, 140)  # scutes / throat plates
     wing_scale: float = 1.0
     #          (yaw from straight-out, length) per finger spar
     fingers: tuple = ((14, 46), (38, 44), (66, 38))
@@ -98,6 +104,7 @@ BLACK = Variant(
     horn=(118, 112, 126), ridge=(56, 54, 66),
     eye=(196, 198, 206), socket=(14, 12, 18),
     teeth=(198, 192, 184),
+    belly=(104, 100, 112),
     wing_scale=1.69,                # 1.3 base, then +30% per request
     fingers=((10, 48), (30, 46), (50, 42), (70, 36)),
 )
@@ -110,6 +117,7 @@ WHITE = Variant(
     horn=(240, 236, 224), ridge=(206, 210, 218),
     eye=(248, 248, 255), socket=(58, 52, 60),
     teeth=(214, 206, 188),
+    belly=(247, 244, 237),
     wing_scale=1.0,
     girth=0.9,
     whiskers=True,
@@ -134,6 +142,7 @@ RED = Variant(
     horn=(216, 206, 186), ridge=(92, 26, 22),
     eye=(255, 178, 48), socket=(28, 10, 8),
     teeth=(226, 218, 202),
+    belly=(216, 166, 124),
 )
 
 BONES: list[Bone] = []
@@ -143,6 +152,7 @@ CUBES: list[Cube] = []
 def reset():
     BONES.clear()
     CUBES.clear()
+    FACE_COLORS.clear()
 
 
 def bone(name, parent, pivot, rot=(0, 0, 0), color=(140, 140, 140)):
@@ -258,6 +268,9 @@ def build_wyvern(v: Variant):
         cube(name, (tip[0], tip[1] + 0.5, tip[2] - length / 2), (w, h, length + 2))
         cube(name, (tip[0], tip[1] + h / 2 + 1.2, tip[2] - length / 2),
              (1.4, 3.2, length - 3), color=v.ridge)
+        # gular throat plate
+        cube(name, (tip[0], tip[1] + 0.5 - h / 2 - 0.4, tip[2] - length / 2),
+             (w - 3.5, 2.0, length - 2), color=v.belly)
         tip = (tip[0], tip[1], tip[2] - length)
         parent = name
 
@@ -276,6 +289,9 @@ def build_wyvern(v: Variant):
         fore = bone(f"wing_{side}_fore", arm, elbow,
                     rot=(0, -18 * sx, -12 * sx), color=v.hide)
         cube(fore, (elbow[0] + 13 * ws * sx, elbow[1], elbow[2]), (27 * ws, 3.6, 3.6))
+        # elbow spur hooking back off the joint
+        cube(fore, (elbow[0] + 1.5 * sx, elbow[1] + 1.0, elbow[2] + 3.2),
+             (1.5, 1.5, 4.6), color=v.horn)
         wrist = (elbow[0] + 26 * ws * sx, elbow[1], elbow[2])
         hand = bone(f"wing_{side}_hand", fore, wrist, rot=(0, 0, 0), color=v.hide)
         cube(hand, (wrist[0] + 2.5 * sx, wrist[1], wrist[2]), (6, 3.2, 3.2))
@@ -317,6 +333,9 @@ def build_wyvern(v: Variant):
         ankle = (knee[0], knee[1] - 11.5, knee[2] - 4)
         foot = bone(f"leg_{side}_foot", shin, ankle, rot=(18, 0, 0), color=v.hide_dark)
         cube(foot, (ankle[0], ankle[1] - 4, ankle[2] - 1), (4.6, 8.5, 5))
+        # ankle spur
+        cube(foot, (ankle[0], ankle[1] - 0.5, ankle[2] + 2.4), (1.4, 1.4, 3.6),
+             color=v.horn)
         toes = bone(f"leg_{side}_toes", foot, (ankle[0], ankle[1] - 8, ankle[2] - 2),
                     color=v.hide_dark)
         for ti, tox in enumerate((-1.8, 0.0, 1.8)):
@@ -347,14 +366,29 @@ def build_wyvern(v: Variant):
         if i <= len(tail_specs) - 2:  # spine ridges fade out toward the tip
             cube(name, (tip[0], tip[1] + h / 2 + 1.1, tip[2] + length / 2),
                  (1.2, 2.6, length - 4), color=v.ridge)
+        if 2 <= i <= len(tail_specs) - 3:  # lateral spikes on the mid-tail
+            for sxs in (1, -1):
+                cube(name, (sxs * (w / 2 + 1.1), tip[1] + h * 0.15,
+                            tip[2] + length / 2), (2.6, 1.1, 1.1), color=v.horn)
         tip = (tip[0], tip[1], tip[2] + length)
         parent = name
     fin = bone("tail_fin", parent, tip, color=v.membrane)
     cube(fin, (tip[0], tip[1] + 1, tip[2] + 4), (0.8, 7, 10))
 
-    # --- back ridges along the spine ---
+    # --- back ridges along the spine: plate + lighter spike tip ---
     for rz, ry in ((-20, 36.2), (-13, 36.6), (-6, 36.6), (1, 36.2), (8, 34.4), (15, 33.4)):
-        cube("body", (0, ry, rz), (1.6, 3.4, 5.4), color=v.ridge)
+        cube("body", (0, ry, rz), (1.6, 3.0, 5.4), color=v.ridge)
+        cube("body", (0, ry + 2.5, rz + 0.4), (0.9, 2.6, 3.0), color=v.horn)
+
+    # --- armor & underside detail ---
+    for i_s, sz in enumerate((-18, -10, -2, 6, 14)):  # belly scute bands
+        cube("body", (0, 14.4, sz), ((15.5 - 0.5 * i_s) * g, 2.4, 7.2),
+             color=v.belly)
+    for sxp in (1, -1):
+        cube("body", (10.5 * g * sxp, 33.0, -16), (7.5, 5.5, 9.5),
+             color=v.hide_dark)   # shoulder plate over the wing root
+        cube("body", (9.0 * g * sxp, 27.5, 12.5), (6.0, 5.0, 8.0),
+             color=v.hide_dark)   # hip plate
 
 
 def ground_model():
@@ -574,19 +608,20 @@ def fly_vertical_channels(v: Variant):
 # ------------------------------------------------------------------ UV packer
 
 def pack_uvs():
-    """Shelf-packs box UVs onto the sheet, biggest cubes first."""
+    """Shelf-packs the unwrapped cubes onto the sheet, biggest first.
+    Coordinates are in texture pixels (TEXEL px per model unit)."""
     order = sorted(range(len(CUBES)), key=lambda i: -(
         _uv_w(CUBES[i]) * _uv_h(CUBES[i])))
     x = y = shelf_h = 0
     for i in order:
         w, h = _uv_w(CUBES[i]), _uv_h(CUBES[i])
         if x + w > TEX_W:
-            x, y = 0, y + shelf_h
+            x, y = 0, y + shelf_h + UV_PAD
             shelf_h = 0
         if y + h > TEX_H:
             raise SystemExit(f"UV overflow: texture {TEX_W}x{TEX_H} too small")
         CUBES[i].uv = (x, y)
-        x += w
+        x += w + UV_PAD
         shelf_h = max(shelf_h, h)
 
 
@@ -597,12 +632,204 @@ def _dims(c: Cube):
 
 def _uv_w(c: Cube):
     w, h, d = _dims(c)
-    return 2 * (w + d)
+    return 2 * (w + d) * TEXEL
 
 
 def _uv_h(c: Cube):
     w, h, d = _dims(c)
-    return h + d
+    return (h + d) * TEXEL
+
+
+def _face_rects(c: Cube):
+    """Per-face UV rects (x1, y1, x2, y2) in texture px, classic box layout.
+    up/down are stored flipped (x2<x1 / both reversed), as Blockbench does."""
+    w, h, d = (x * TEXEL for x in _dims(c))
+    u, v = c.uv
+    return {
+        "east": (u, v + d, u + d, v + d + h),
+        "north": (u + d, v + d, u + d + w, v + d + h),
+        "west": (u + d + w, v + d, u + 2 * d + w, v + d + h),
+        "south": (u + 2 * d + w, v + d, u + 2 * (d + w), v + d + h),
+        "up": (u + d + w, v + d, u + d, v),
+        "down": (u + 2 * w + d, v, u + d + w, v + d),
+    }
+
+
+# -------------------------------------------------------------- texture paint
+
+FACE_COLORS: dict[tuple[int, str], tuple[int, int, int]] = {}
+
+
+def _sh(c, f, a=255):
+    """Shade a color by factor f."""
+    return (max(0, min(255, int(c[0] * f))), max(0, min(255, int(c[1] * f))),
+            max(0, min(255, int(c[2] * f))), a)
+
+
+def _norm_rect(r):
+    x1, y1, x2, y2 = r
+    return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+
+def _grad_fill(drw, r, base, top_f, bot_f):
+    """Vertical gradient fill across a face."""
+    x1, y1, x2, y2 = r
+    for row in range(y1, y2):
+        t = (row - y1) / max(1, y2 - y1 - 1)
+        drw.line([(x1, row), (x2 - 1, row)], fill=_sh(base, top_f + (bot_f - top_f) * t))
+
+
+def _mottle(drw, r, base, rng, strength=0.10, density=24):
+    x1, y1, x2, y2 = r
+    for _ in range(max(1, (x2 - x1) * (y2 - y1) // density)):
+        px = rng.randrange(x1, x2)
+        py = rng.randrange(y1, y2)
+        f = 1.0 + rng.uniform(-strength, strength)
+        drw.rectangle([px, py, min(px + rng.randint(0, 1), x2 - 1),
+                       min(py + rng.randint(0, 1), y2 - 1)], fill=_sh(base, f))
+
+
+def _scales(drw, r, base, rng):
+    """Staggered crescent rows - reads as overlapping scales."""
+    x1, y1, x2, y2 = r
+    w, h = x2 - x1, y2 - y1
+    if w < 6 or h < 6:
+        return
+    s = 4 if min(w, h) >= 12 else 3
+    dark, light = _sh(base, 0.78), _sh(base, 1.16)
+    row = 0
+    for py in range(y1 + 2, y2 - 1, s):
+        off = (s // 2) if row % 2 else 0
+        for px in range(x1 + 1 + off, x2 - 1, s):
+            drw.line([(max(x1, px - 1), py), (min(x2 - 1, px + 1), py)], fill=dark)
+            drw.point((px, py - 1), fill=light)
+        row += 1
+
+
+def _edge_ao(drw, r, base, f=0.82):
+    x1, y1, x2, y2 = r
+    drw.rectangle([x1, y1, x2 - 1, y2 - 1], outline=_sh(base, f))
+
+
+def _paint_hide(drw, r, base, rng, fname, scaly=True):
+    if fname == "up":
+        _grad_fill(drw, r, base, 0.90, 0.97)
+    elif fname == "down":
+        _grad_fill(drw, r, base, 1.10, 1.16)
+    else:
+        _grad_fill(drw, r, base, 0.92, 1.08)  # dorsal dark -> ventral light
+    _mottle(drw, r, base, rng)
+    if scaly:
+        _scales(drw, r, base, rng)
+    _edge_ao(drw, r, base)
+
+
+def _paint_belly(drw, r, base, rng):
+    _grad_fill(drw, r, base, 1.04, 0.96)
+    x1, y1, x2, y2 = r
+    for py in range(y1 + 1, y2, 4):  # plate bands
+        drw.line([(x1, py), (x2 - 1, py)], fill=_sh(base, 0.82))
+        if py + 1 < y2:
+            drw.line([(x1, py + 1), (x2 - 1, py + 1)], fill=_sh(base, 1.10))
+    _mottle(drw, r, base, rng, strength=0.05, density=40)
+    _edge_ao(drw, r, base, 0.85)
+
+
+def _paint_membrane(drw, r, base, rng, c: Cube, fname):
+    x1, y1, x2, y2 = _norm_rect(r)
+    w, h = x2 - x1, y2 - y1
+    if fname not in ("up", "down") or w < 10 or h < 6:
+        drw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=_sh(base, 0.9))
+        return
+    # stretched skin: light passes through the middle, edges stay dark
+    for row in range(y1, y2):
+        t = (row - y1) / max(1, h - 1)
+        drw.line([(x1, row), (x2 - 1, row)],
+                 fill=_sh(base, 0.94 + 0.18 * math.sin(math.pi * t)))
+    # veins fan from the wrist-side leading corner toward the trailing edge
+    left_wing = "_l_" in c.bone
+    ox = x1 + 1 if left_wing else x2 - 2
+    vein = _sh(base, 0.72)
+    n = max(4, w // 12)
+    for k in range(n):
+        t = (k + 1) / (n + 1)
+        ex = x1 + int(t * (w - 1)) if not left_wing else x2 - 1 - int(t * (w - 1))
+        ey = y2 - 1
+        mx = (ox + ex) // 2 + rng.randint(-2, 2)
+        my = (y1 + ey) // 2 + rng.randint(-2, 2)
+        drw.line([(ox, y1 + 1), (mx, my)], fill=vein)
+        drw.line([(mx, my), (ex, ey)], fill=vein)
+    _edge_ao(drw, (x1, y1, x2, y2), base, 0.78)
+
+
+def _paint_horn(drw, r, base, rng):
+    x1, y1, x2, y2 = r
+    w, h = x2 - x1, y2 - y1
+    _grad_fill(drw, r, base, 0.92, 1.06)
+    ring = _sh(base, 0.84)
+    if w >= h:  # keratin growth rings across the long axis
+        for px in range(x1 + 2, x2 - 1, 3):
+            drw.line([(px, y1), (px, y2 - 1)], fill=ring)
+    else:
+        for py in range(y1 + 2, y2 - 1, 3):
+            drw.line([(x1, py), (x2 - 1, py)], fill=ring)
+    _edge_ao(drw, r, base, 0.85)
+
+
+def _paint_eye(drw, img, r, base, fname):
+    x1, y1, x2, y2 = _norm_rect(r)
+    drw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=_sh(base, 1.0))
+    if fname in ("up", "down") or x2 - x1 < 2 or y2 - y1 < 3:
+        return
+    cx = (x1 + x2) // 2  # vertical slit pupil + glint
+    for px in range(max(x1, cx - (1 if x2 - x1 >= 6 else 0)), min(x2, cx + 1)):
+        drw.line([(px, y1 + 1), (px, y2 - 2)], fill=(16, 10, 14, 255))
+    img.putpixel((max(x1, cx - 1), y1 + 1), (245, 245, 250, 255))
+
+
+def paint_texture(v: Variant, path):
+    """Paints the packed sheet per material: scaled hide, veined membranes,
+    ringed horn, banded belly scutes, slit-pupil eyes. Deterministic per
+    variant. Also records per-face mean colors for the 3D previews."""
+    rng = random.Random(v.name)
+    img = Image.new("RGBA", (TEX_W, TEX_H), (0, 0, 0, 0))
+    drw = ImageDraw.Draw(img)
+    mats = {v.hide: "hide", v.hide_dark: "hide_dark", v.membrane: "membrane",
+            v.horn: "horn", v.ridge: "ridge", v.eye: "eye", v.socket: "socket",
+            v.teeth: "teeth", v.belly: "belly", (42, 16, 18): "mouth"}
+    bone_color = {b.name: b.color for b in BONES}
+    FACE_COLORS.clear()
+    for i, c in enumerate(CUBES):
+        base = c.color if c.color is not None else bone_color[c.bone]
+        mat = mats.get(base, "hide")
+        for fname, rect in _face_rects(c).items():
+            r = _norm_rect(rect)
+            if r[2] - r[0] < 1 or r[3] - r[1] < 1:
+                continue
+            if mat in ("hide", "hide_dark"):
+                _paint_hide(drw, r, base, rng, fname)
+            elif mat == "belly":
+                _paint_belly(drw, r, base, rng)
+            elif mat == "membrane":
+                _paint_membrane(drw, rect, base, rng, c, fname)
+            elif mat in ("horn", "teeth"):
+                _paint_horn(drw, r, base, rng)
+            elif mat == "ridge":
+                _paint_hide(drw, r, base, rng, fname, scaly=False)
+            elif mat == "eye":
+                _paint_eye(drw, img, r, base, fname)
+            elif mat == "socket":
+                _grad_fill(drw, r, base, 0.9, 1.05)
+            else:  # mouth
+                _grad_fill(drw, r, base, 0.75, 1.0)
+    for i, c in enumerate(CUBES):
+        for fname, rect in _face_rects(c).items():
+            r = _norm_rect(rect)
+            if r[2] - r[0] < 1 or r[3] - r[1] < 1:
+                continue
+            mean = ImageStat.Stat(img.crop(r).convert("RGB")).mean
+            FACE_COLORS[(i, fname)] = tuple(int(x) for x in mean)
+    img.save(path)
 
 
 # ---------------------------------------------------------------- transforms
@@ -697,9 +924,9 @@ def pose_at(channels, t, length):
 # ------------------------------------------------------------------ renderer
 
 FACES = (  # vertex index quads over the (x,y,z) in {lo,hi} corner ordering
-    ((0, 1, 3, 2), (-1, 0, 0)), ((4, 6, 7, 5), (1, 0, 0)),
-    ((0, 4, 5, 1), (0, -1, 0)), ((2, 3, 7, 6), (0, 1, 0)),
-    ((0, 2, 6, 4), (0, 0, -1)), ((1, 5, 7, 3), (0, 0, 1)),
+    ((0, 1, 3, 2), "west"), ((4, 6, 7, 5), "east"),
+    ((0, 4, 5, 1), "down"), ((2, 3, 7, 6), "up"),
+    ((0, 2, 6, 4), "north"), ((1, 5, 7, 3), "south"),
 )
 
 
@@ -721,16 +948,53 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
     else:
         anchor = (size[0] / 2, size[1] * 0.62)
 
-    polys = []
+    # world-space boxes for hidden-face culling (painter's algorithm has no
+    # z-buffer, so faces buried inside another cube must be skipped, not
+    # drawn-then-overdrawn - detail cubes interpenetrate on purpose)
+    EPS = 0.05
+    boxes = []
     for c in CUBES:
+        fn = transforms[c.bone]
+        o = fn((0.0, 0.0, 0.0))
+        ax = [tuple(a - b for a, b in zip(fn(u), o))
+              for u in ((1, 0, 0), (0, 1, 0), (0, 0, 1))]
+        lo = (c.lo[0] - c.inflate, c.lo[1] - c.inflate, c.lo[2] - c.inflate)
+        hi = (c.hi[0] + c.inflate, c.hi[1] + c.inflate, c.hi[2] + c.inflate)
+        ctr = fn(tuple((a + b) / 2 for a, b in zip(c.lo, c.hi)))
+        hd2 = sum(((hi[k] - lo[k]) / 2) ** 2 for k in range(3)) + 1.0
+        boxes.append((o, ax, lo, hi, ctr, hd2))
+
+    def buried(fc, self_i):
+        for j, (o, ax, lo, hi, ctr, hd2) in enumerate(boxes):
+            if j == self_i:
+                continue
+            if sum((fc[k] - ctr[k]) ** 2 for k in range(3)) > hd2:
+                continue
+            rel = (fc[0] - o[0], fc[1] - o[1], fc[2] - o[2])
+            inside = True
+            for k in range(3):
+                p = rel[0] * ax[k][0] + rel[1] * ax[k][1] + rel[2] * ax[k][2]
+                if not (lo[k] + EPS < p < hi[k] - EPS):
+                    inside = False
+                    break
+            if inside:
+                return True
+        return False
+
+    polys = []
+    for ci, c in enumerate(CUBES):
         fn = transforms[c.bone]
         lo = (c.lo[0] - c.inflate, c.lo[1] - c.inflate, c.lo[2] - c.inflate)
         hi = (c.hi[0] + c.inflate, c.hi[1] + c.inflate, c.hi[2] + c.inflate)
         verts = [fn((x, y, z)) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
                  for z in (lo[2], hi[2])]
-        base = c.color if c.color is not None else bone_colors[c.bone]
-        for idx, _ in FACES:
+        flat = c.color if c.color is not None else bone_colors[c.bone]
+        for idx, face_name in FACES:
+            base = FACE_COLORS.get((ci, face_name), flat)
             pts = [verts[i] for i in idx]
+            fc = tuple(sum(p[k] for p in pts) / 4 for k in range(3))
+            if buried(fc, ci):
+                continue
             ux = tuple(pts[1][k] - pts[0][k] for k in range(3))
             vx = tuple(pts[3][k] - pts[0][k] for k in range(3))
             n = (ux[1] * vx[2] - ux[2] * vx[1], ux[2] * vx[0] - ux[0] * vx[2],
@@ -778,28 +1042,18 @@ def render_fly_previews(v: Variant, channels, length, tag, frames=16):
 
 # ------------------------------------------------------------------ exports
 
-def export_bbmodel(path, model_name, animations=None):
+def export_bbmodel(path, model_name, animations=None, texture_path=None):
     elements = []
     uuids = {}
     bone_index = {b.name: b for b in BONES}
     for i, c in enumerate(CUBES):
         eid = str(uuid.uuid4())
         uuids.setdefault(c.bone, []).append(eid)
-        w, h, d = _dims(c)
-        u, v = c.uv
-        faces = {
-            "north": {"uv": [u + d, v + d, u + d + w, v + d + h]},
-            "east": {"uv": [u, v + d, u + d, v + d + h]},
-            "south": {"uv": [u + 2 * d + w, v + d, u + 2 * (d + w), v + d + h]},
-            "west": {"uv": [u + d + w, v + d, u + 2 * d + w, v + d + h]},
-            "up": {"uv": [u + d + w, v + d, u + d, v]},
-            "down": {"uv": [u + 2 * w + d, v, u + d + w, v + d]},
-        }
-        for f in faces.values():
-            f["texture"] = 0
+        faces = {fname: {"uv": list(rect), "texture": 0}
+                 for fname, rect in _face_rects(c).items()}
         elements.append({
             "name": f"{c.bone}_{i}",
-            "box_uv": True,
+            "box_uv": False,
             "rescale": False,
             "locked": False,
             "from": list(c.lo),
@@ -807,7 +1061,6 @@ def export_bbmodel(path, model_name, animations=None):
             "autouv": 0,
             "color": i % 8,
             "origin": list(bone_index[c.bone].pivot),
-            "uv_offset": [u, v],
             "inflate": c.inflate,
             "mirror_uv": c.mirror,
             "faces": faces,
@@ -836,9 +1089,26 @@ def export_bbmodel(path, model_name, animations=None):
         return node
 
     roots = [outliner_node(b) for b in BONES if b.parent is None]
+    textures = []
+    if texture_path:
+        with open(texture_path, "rb") as tf:
+            b64 = base64.b64encode(tf.read()).decode("ascii")
+        tex_name = os.path.basename(texture_path)
+        textures.append({
+            "path": texture_path, "name": tex_name, "folder": "", "namespace": "",
+            "id": "0", "group": "", "width": TEX_W, "height": TEX_H,
+            "uv_width": TEX_W, "uv_height": TEX_H, "particle": False,
+            "use_as_default": False, "layers_enabled": False,
+            "sync_to_project": "", "render_mode": "default",
+            "render_sides": "auto", "frame_time": 1, "frame_order_type": "loop",
+            "frame_order": "", "frame_interpolate": False, "visible": True,
+            "internal": True, "saved": True, "uuid": str(uuid.uuid4()),
+            "relative_path": tex_name,
+            "source": f"data:image/png;base64,{b64}",
+        })
     doc = {
         "meta": {"format_version": "4.5", "model_format": "animated_entity_model",
-                 "box_uv": True},
+                 "box_uv": False},
         "name": model_name,
         "model_identifier": model_name,
         "visible_box": [1, 1, 0],
@@ -847,7 +1117,7 @@ def export_bbmodel(path, model_name, animations=None):
         "resolution": {"width": TEX_W, "height": TEX_H},
         "elements": elements,
         "outliner": roots,
-        "textures": [],
+        "textures": textures,
         "animations": animations or [],
     }
     with open(path, "w") as f:
@@ -941,10 +1211,16 @@ def export_geo(path, identifier):
         cl = []
         for c in cubes_by_bone.get(b.name, []):
             w = c.hi[0] - c.lo[0]
+            # X-mirror swaps which side faces +X, so east/west trade UV rects
+            swap = {"east": "west", "west": "east"}
+            uv = {}
+            for fname, (x1, y1, x2, y2) in _face_rects(c).items():
+                uv[swap.get(fname, fname)] = {
+                    "uv": [x1, y1], "uv_size": [x2 - x1, y2 - y1]}
             cl.append({
                 "origin": [-c.hi[0], c.lo[1], c.lo[2]],
                 "size": [w, c.hi[1] - c.lo[1], c.hi[2] - c.lo[2]],
-                "uv": list(c.uv),
+                "uv": uv,
                 **({"inflate": c.inflate} if c.inflate else {}),
                 **({"mirror": True} if c.mirror else {}),
             })
@@ -976,13 +1252,16 @@ def build_variant(v: Variant):
     build_wyvern(v)
     ground_model()
     pack_uvs()
+    tex_path = os.path.join(OUT_DIR, f"wyvern_{v.name}.png")
+    paint_texture(v, tex_path)
     fly_len, fly = fly_channels(v)
     vert_len, vert = fly_vertical_channels(v)
     anims = [("animation.wyvern.fly", fly_len, fly),
              ("animation.wyvern.fly_vertical", vert_len, vert)]
     export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"),
                    f"wyvern_{v.name}",
-                   animations=[bb_animation(*a) for a in anims])
+                   animations=[bb_animation(*a) for a in anims],
+                   texture_path=tex_path)
     export_geo(os.path.join(OUT_DIR, f"wyvern_{v.name}.geo.json"),
                f"geometry.allunderheaven.wyvern_{v.name}")
     export_animation_json(os.path.join(OUT_DIR, f"wyvern_{v.name}.animation.json"),
