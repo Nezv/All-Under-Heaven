@@ -86,6 +86,7 @@ class Variant:
     socket: tuple[int, int, int]
     teeth: tuple[int, int, int]
     belly: tuple[int, int, int] = (200, 170, 140)  # scutes / throat plates
+    iris: tuple[int, int, int] = (255, 210, 40)    # vibrant ring round the slit
     wing_scale: float = 1.0
     #          (yaw from straight-out, length) per finger spar
     fingers: tuple = ((14, 46), (38, 44), (66, 38))
@@ -104,7 +105,8 @@ BLACK = Variant(
     hide=(42, 42, 48), hide_dark=(30, 30, 36),
     membrane=(84, 84, 92),          # storm-grey membranes
     horn=(118, 112, 126), ridge=(56, 54, 66),
-    eye=(196, 198, 206), socket=(14, 12, 18),
+    eye=(106, 100, 56), socket=(14, 12, 18),   # greenish-brown reptile eye
+    iris=(250, 220, 30),                        # vibrant yellow
     teeth=(198, 192, 184),
     belly=(104, 100, 112),
     wing_scale=1.69,                # 1.3 base, then +30% per request
@@ -117,7 +119,8 @@ WHITE = Variant(
     hide=(226, 228, 232), hide_dark=(198, 202, 210),
     membrane=(216, 196, 202),       # pale rose membranes
     horn=(240, 236, 224), ridge=(206, 210, 218),
-    eye=(248, 248, 255), socket=(58, 52, 60),
+    eye=(160, 196, 228), socket=(58, 52, 60),  # light-blue reptile eye
+    iris=(64, 140, 255),                        # vibrant blue
     teeth=(214, 206, 188),
     belly=(247, 244, 237),
     wing_scale=1.0,
@@ -142,7 +145,8 @@ RED = Variant(
     hide=(146, 46, 38), hide_dark=(106, 30, 26),
     membrane=(168, 86, 60),         # warm sunset membranes
     horn=(216, 206, 186), ridge=(92, 26, 22),
-    eye=(255, 178, 48), socket=(28, 10, 8),
+    eye=(172, 92, 24), socket=(28, 10, 8),     # dark-orange reptile eye
+    iris=(255, 214, 40),                        # vibrant yellow
     teeth=(226, 218, 202),
     belly=(216, 166, 124),
 )
@@ -213,10 +217,11 @@ def build_head(parent: str, tip: tuple[float, float, float], neck_pitch_sum: flo
         cube(brow, hp(2.6 * sx, 6.3, -7.8), hsz(0.9, 2.4, 0.9), color=v.horn)
         cube(brow, hp(4.1 * sx, 5.9, -6.8), hsz(0.8, 1.8, 0.8), color=v.horn)
 
-    # eyes: dark socket rims with proud, bright eye cubes (variant color)
+    # eyes: small almond reptile eyes - wider than tall, tucked up under the
+    # brow shadow, poking just proud of a slim dark socket rim
     for sx in (1, -1):
-        cube(head, hp(4.0 * sx, 3.3, -7.2), hsz(1.1, 3.0, 3.6), color=v.socket)
-        cube(head, hp(4.5 * sx, 3.3, -7.2), hsz(0.8, 2.2, 2.8), color=v.eye)
+        cube(head, hp(4.0 * sx, 3.6, -7.2), hsz(1.0, 2.0, 3.0), color=v.socket)
+        cube(head, hp(4.45 * sx, 3.6, -7.2), hsz(0.7, 1.3, 2.4), color=v.eye)
 
     # snout: slight droop, top ridge, nasal ridge and hooked tip
     snout = bone("snout", head, hp(0, 2.4, -10), rot=(-5, 0, 0), color=v.hide)
@@ -840,15 +845,21 @@ def _paint_horn(drw, r, base, rng):
     _edge_ao(drw, r, base, 0.85)
 
 
-def _paint_eye(drw, img, r, base, fname):
+def _paint_eye(drw, img, r, base, fname, iris):
+    """Reptile eye: dark outer rim, vibrant iris, black vertical slit pupil
+    with a single glint. Small faces get rim+slit only."""
     x1, y1, x2, y2 = _norm_rect(r)
-    drw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=_sh(base, 1.0))
-    if fname in ("up", "down") or x2 - x1 < 2 or y2 - y1 < 3:
+    w, h = x2 - x1, y2 - y1
+    drw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=_sh(base, 0.85))
+    if fname in ("up", "down") or w < 3 or h < 3:
         return
-    cx = (x1 + x2) // 2  # vertical slit pupil + glint
-    for px in range(max(x1, cx - (1 if x2 - x1 >= 6 else 0)), min(x2, cx + 1)):
-        drw.line([(px, y1 + 1), (px, y2 - 2)], fill=(16, 10, 14, 255))
-    img.putpixel((max(x1, cx - 1), y1 + 1), (245, 245, 250, 255))
+    if w >= 5 and h >= 4:
+        drw.rectangle([x1 + 1, y1 + 1, x2 - 2, y2 - 2], fill=_sh(iris, 1.0))
+    cx = (x1 + x2) // 2
+    sw = 2 if w >= 9 else 1
+    drw.rectangle([cx - sw // 2, y1 + 1, cx - sw // 2 + sw - 1, y2 - 2],
+                  fill=(14, 10, 10, 255))
+    img.putpixel((max(x1, cx - sw), y1 + 1), (240, 244, 248, 255))
 
 
 def paint_texture(v: Variant, path):
@@ -881,7 +892,7 @@ def paint_texture(v: Variant, path):
             elif mat == "ridge":
                 _paint_hide(drw, r, base, rng, fname, scaly=False)
             elif mat == "eye":
-                _paint_eye(drw, img, r, base, fname)
+                _paint_eye(drw, img, r, base, fname, v.iris)
             elif mat == "socket":
                 _grad_fill(drw, r, base, 0.9, 1.05)
             else:  # mouth
