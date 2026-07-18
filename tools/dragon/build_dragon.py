@@ -757,14 +757,21 @@ def idle_channels(v: Variant):
         static[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
         static[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
     plant_z = _solve_plant(static)
+    # with the forearm near-vertical, finger yaw sweeps the SAGITTAL plane:
+    # local +X points at the ground, -90 is horizontal-back, past -90 rises.
+    # All ribs radiate from the planted wrist - the front rib climbs
+    # steepest (~78 deg up), each one behind is shallower, and the outer
+    # (b) segments hook over harder at the front - the reference fan.
+    n_f = len(v.fingers)
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
             lambda t, s=sx: (0, -10 * s, s * (30 + 2.2 * breath(t))))
         rot(f"wing_{side}_fore", (0, 22 * sx, plant_z * sx))
-        rot(f"wing_{side}_hand", (0, -78 * sx, -10 * sx))
-        for fi in range(1, len(v.fingers) + 1):
-            rot(f"wing_{side}_finger{fi}", (0, -(52 + 7 * fi) * sx, 0))
-            rot(f"wing_{side}_finger{fi}b", (0, -(24 + 6 * fi) * sx, 0))
+        for fi, (yaw_rest, _fl) in enumerate(v.fingers, 1):
+            t_f = (fi - 1) / max(1, n_f - 1)
+            target = -(156.0 - 46.0 * t_f)  # total local yaw: steep -> shallow
+            rot(f"wing_{side}_finger{fi}", (0, (target + yaw_rest) * sx, 0))
+            rot(f"wing_{side}_finger{fi}b", (0, -(38.0 - 10.0 * t_f) * sx, 0))
 
     # crouch: chest drops between the planted knuckles, hind legs fold
     for side in ("l", "r"):
