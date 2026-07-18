@@ -197,100 +197,101 @@ def build_head(parent: str, tip: tuple[float, float, float], neck_pitch_sum: flo
 
     head = bone("head", parent, tip, rot=(-neck_pitch_sum, 0, 0), color=v.hide)
 
-    # skull core + armored side plates
-    cube(head, hp(0, 1.6, -4.5), hsz(8.6, 7.6, 11))
+    # skull core: broad and deep (reference heads are wide wedges, not
+    # alligator tubes) + armored side plates
+    cube(head, hp(0, 1.6, -5.0), hsz(10.4, 8.2, 12))
     for sx in (1, -1):
-        cube(head, hp(4.0 * sx, 2.6, -2.5), hsz(1.2, 4.5, 6.5), color=v.hide_dark)
+        cube(head, hp(4.9 * sx, 2.6, -2.5), hsz(1.2, 4.8, 7.0), color=v.hide_dark)
 
-    # crest: main fin + trailing fin + flanking root spikes (hands the
-    # silhouette off to the neck spike row)
+    # crest: doubled fin pair flowing back over the neck root, handing the
+    # silhouette off to the neck spike row, + flanking root spikes
     crest = bone("head_crest", head, hp(0, 5.2, -1), rot=(-34, 0, 0), color=v.ridge)
-    cube(crest, hp(0, 6.4, 2.5), hsz(1.2, 4.4, 8))
-    cube(crest, hp(0, 5.6, 7.2), hsz(1.0, 3.2, 5))
+    cube(crest, hp(0, 7.6, 4.0), hsz(1.3, 7.5, 12))
+    cube(crest, hp(0, 6.4, 11.0), hsz(1.1, 5.5, 9))
     for sx in (1, -1):
-        cube(head, hp(1.3 * sx, 5.8, 1.5), hsz(0.7, 2.4, 0.7), color=v.horn)
+        cube(head, hp(1.5 * sx, 6.0, 1.5), hsz(0.8, 2.6, 0.8), color=v.horn)
 
     # hooded brow ledge with stud spikes over each eye
     brow = bone("brow", head, hp(0, 4.8, -7.5), rot=(-12, 0, 0), color=v.hide_dark)
-    cube(brow, hp(0, 5.1, -8.6), hsz(9.0, 2.0, 5.6))
+    cube(brow, hp(0, 5.3, -8.6), hsz(11.0, 2.2, 5.6))
     for sx in (1, -1):
-        cube(brow, hp(2.6 * sx, 6.3, -7.8), hsz(0.9, 2.4, 0.9), color=v.horn)
-        cube(brow, hp(4.1 * sx, 5.9, -6.8), hsz(0.8, 1.8, 0.8), color=v.horn)
+        cube(brow, hp(3.1 * sx, 6.5, -7.8), hsz(0.9, 2.4, 0.9), color=v.horn)
+        cube(brow, hp(4.8 * sx, 6.1, -6.8), hsz(0.8, 1.8, 0.8), color=v.horn)
 
     # eyes: small almond reptile eyes - wider than tall, tucked up under the
     # brow shadow, poking just proud of a slim dark socket rim
     for sx in (1, -1):
-        cube(head, hp(4.0 * sx, 3.6, -7.2), hsz(1.0, 2.0, 3.0), color=v.socket)
-        cube(head, hp(4.45 * sx, 3.6, -7.2), hsz(0.7, 1.3, 2.4), color=v.eye)
+        cube(head, hp(4.9 * sx, 3.6, -7.2), hsz(1.0, 2.0, 3.0), color=v.socket)
+        cube(head, hp(5.35 * sx, 3.6, -7.2), hsz(0.7, 1.3, 2.4), color=v.eye)
 
-    # snout: slight droop, top ridge, nasal ridge and hooked tip
-    snout = bone("snout", head, hp(0, 2.4, -10), rot=(-5, 0, 0), color=v.hide)
-    cube(snout, hp(0, 2.9, -15.3), hsz(5.4, 3.6, 11.5))
-    cube(snout, hp(0, 4.8, -14), hsz(2.6, 1.2, 8))
-    tip_b = bone("snout_tip", snout, hp(0, 2.4, -20.5), rot=(-12, 0, 0), color=v.hide)
-    cube(tip_b, hp(0, 2.4, -22.6), hsz(4.4, 3.2, 5.2))
-    cube(tip_b, hp(0, 1.1, -24.3), hsz(3.2, 1.8, 2.4))               # hooked tip
-    cube(tip_b, hp(0, 3.9, -22.2), hsz(1.8, 0.9, 3.6), color=v.ridge)  # nasal ridge
+    # snout: SHORT and broad, slight droop, top ridge, blunt hooked tip
+    snout = bone("snout", head, hp(0, 2.4, -10.5), rot=(-5, 0, 0), color=v.hide)
+    cube(snout, hp(0, 2.9, -14.6), hsz(7.0, 4.2, 9.4))
+    cube(snout, hp(0, 5.2, -13.6), hsz(3.4, 1.2, 6.4))
+    tip_b = bone("snout_tip", snout, hp(0, 2.4, -18.6), rot=(-12, 0, 0), color=v.hide)
+    cube(tip_b, hp(0, 2.4, -20.4), hsz(5.6, 3.8, 4.6))
+    cube(tip_b, hp(0, 0.9, -22.4), hsz(4.2, 2.0, 2.6))               # blunt hook
+    cube(tip_b, hp(0, 4.35, -20.4), hsz(2.0, 0.9, 3.4), color=v.ridge)  # nasal ridge
     for sx in (1, -1):
-        cube(tip_b, hp(1.5 * sx, 4.0, -23.2), hsz(1.2, 1.0, 2.2),
-             color=v.hide_dark)                                       # flared nostrils
-        # long front fangs off the tip, the wolf-teeth of the profile
-        cube(tip_b, hp(1.5 * sx, 0.4, -23.4), hsz(0.7, 2.2, 0.8), color=v.teeth)
+        cube(tip_b, hp(1.8 * sx, 4.5, -20.8), hsz(1.4, 1.0, 2.4),
+             color=v.hide_dark)                                       # big nostril pits
+        # front fangs off the tip, the wolf-teeth of the profile
+        cube(tip_b, hp(1.7 * sx, 0.3, -21.6), hsz(0.7, 2.2, 0.8), color=v.teeth)
 
     # ethereal variants: thin whisker barbels trailing back off the snout,
     # drooping in two segments past the jaw line
     if v.whiskers:
         for side, sx in (("l", 1), ("r", -1)):
-            w1 = bone(f"whisker_{side}_1", tip_b, hp(2.4 * sx, 1.8, -21.5),
+            w1 = bone(f"whisker_{side}_1", tip_b, hp(2.8 * sx, 1.8, -19.5),
                       rot=(10, 34 * sx, 0), color=v.horn)
-            cube(w1, hp(2.4 * sx, 1.8, -17), hsz(0.6, 0.6, 10))
-            w2 = bone(f"whisker_{side}_2", w1, hp(2.4 * sx, 1.8, -12),
+            cube(w1, hp(2.8 * sx, 1.8, -15), hsz(0.6, 0.6, 10))
+            w2 = bone(f"whisker_{side}_2", w1, hp(2.8 * sx, 1.8, -10),
                       rot=(18, 10 * sx, 0), color=v.horn)
-            cube(w2, hp(2.4 * sx, 1.8, -7.5), hsz(0.45, 0.45, 10))
+            cube(w2, hp(2.8 * sx, 1.8, -5.5), hsz(0.45, 0.45, 10))
 
     # overlapping upper fang rows along the lip line (varied heights)
     for sx in (1, -1):
-        for fz, fh in ((-11.8, 1.2), (-13.6, 1.5), (-15.4, 1.2), (-17.2, 1.4),
-                       (-18.8, 1.1)):
-            cube(snout, hp(2.25 * sx, 0.6, fz), hsz(0.6, fh, 0.8), color=v.teeth)
+        for fz, fh in ((-10.8, 1.2), (-12.6, 1.5), (-14.4, 1.2), (-16.2, 1.4),
+                       (-17.6, 1.1)):
+            cube(snout, hp(2.95 * sx, 0.6, fz), hsz(0.6, fh, 0.8), color=v.teeth)
 
-    # parted lower jaw: dark mouth shadow, teeth, spur row, barbels, chin
+    # parted lower jaw: broad, dark mouth shadow, teeth, spur row, barbels
     jaw = bone("jaw", head, hp(0, -0.9, -2), rot=(-13, 0, 0), color=v.hide_dark)
-    cube(jaw, hp(0, -1.7, -10.8), hsz(4.6, 2.2, 16))
-    cube(jaw, hp(0, -0.35, -10.5), hsz(3.8, 1.1, 13), color=(42, 16, 18))
+    cube(jaw, hp(0, -1.7, -9.2), hsz(6.0, 2.4, 13.5))
+    cube(jaw, hp(0, -0.3, -9.0), hsz(5.0, 1.1, 11), color=(42, 16, 18))
     for sx in (1, -1):
-        for fz, fh in ((-12.4, 1.1), (-14.8, 1.3), (-17.0, 1.0)):
-            cube(jaw, hp(1.85 * sx, -0.1, fz), hsz(0.55, fh, 0.7), color=v.teeth)
-        for jz in (-5.5, -9.5, -13.5):  # mandible spurs marching down the jaw
-            cube(jaw, hp(1.9 * sx, -2.9, jz), hsz(0.7, 1.6, 0.7), color=v.horn)
-        cube(jaw, hp(0.9 * sx, -3.3, -18.2), hsz(0.6, 1.5, 0.6), color=v.horn)
-    cube(jaw, hp(0, -2.3, -19.3), hsz(3.4, 1.8, 3))
+        for fz, fh in ((-11.2, 1.1), (-13.2, 1.3), (-15.0, 1.0)):
+            cube(jaw, hp(2.4 * sx, -0.1, fz), hsz(0.55, fh, 0.7), color=v.teeth)
+        for jz in (-5.0, -8.5, -12.0):  # mandible spurs marching down the jaw
+            cube(jaw, hp(2.55 * sx, -3.0, jz), hsz(0.7, 1.6, 0.7), color=v.horn)
+        cube(jaw, hp(1.1 * sx, -3.4, -16.2), hsz(0.6, 1.5, 0.6), color=v.horn)
+    cube(jaw, hp(0, -2.4, -16.6), hsz(4.4, 1.8, 3))
 
     # cheek flares with horn clusters sweeping back-out
     for side, sx in (("l", 1), ("r", -1)):
-        flare = bone(f"cheek_{side}", head, hp(4.2 * sx, 2, 0.5),
+        flare = bone(f"cheek_{side}", head, hp(5.1 * sx, 2, 0.5),
                      rot=(0, 26 * sx, 0), color=v.hide_dark)
-        cube(flare, hp(4.6 * sx, 1.8, 3.8), hsz(0.8, 5, 7.5), mirror=sx < 0)
-        cube(flare, hp(5.1 * sx, 1.0, 6.6), hsz(0.8, 0.8, 3.4), color=v.horn)
-        cube(flare, hp(5.1 * sx, 3.2, 7.0), hsz(0.7, 0.7, 2.8), color=v.horn)
+        cube(flare, hp(5.5 * sx, 1.8, 3.8), hsz(0.8, 5, 7.5), mirror=sx < 0)
+        cube(flare, hp(6.0 * sx, 1.0, 6.6), hsz(0.8, 0.8, 3.4), color=v.horn)
+        cube(flare, hp(6.0 * sx, 3.2, 7.0), hsz(0.7, 0.7, 2.8), color=v.horn)
 
     # horn crown: three pairs fanning back at different pitch/yaw - the
     # long main pair (two segments), a steep high pair, a wide low pair
     for side, sx in (("l", 1), ("r", -1)):
         # +yaw carries a rear-pointing (+Z) part toward +X, so out-splay on
         # the left (+X) side is POSITIVE yaw * sx - negative converges them
-        h1 = bone(f"horn_{side}_1", head, hp(3.0 * sx, 5.2, 0.5),
+        h1 = bone(f"horn_{side}_1", head, hp(3.6 * sx, 5.4, 0.5),
                   rot=(-26, 14 * sx, 0), color=v.horn)
-        cube(h1, hp(3.0 * sx, 5.2, 5.5), hsz(2.4, 2.4, 11))
-        h2 = bone(f"horn_{side}_2", h1, hp(3.0 * sx, 5.2, 11),
+        cube(h1, hp(3.6 * sx, 5.4, 5.5), hsz(2.4, 2.4, 11))
+        h2 = bone(f"horn_{side}_2", h1, hp(3.6 * sx, 5.4, 11),
                   rot=(-16, 0, 0), color=v.horn)
-        cube(h2, hp(3.0 * sx, 5.2, 15.5), hsz(1.5, 1.5, 10.5))
-        h3 = bone(f"horn_{side}_hi", head, hp(1.6 * sx, 6.6, 0.2),
+        cube(h2, hp(3.6 * sx, 5.4, 15.5), hsz(1.5, 1.5, 10.5))
+        h3 = bone(f"horn_{side}_hi", head, hp(2.0 * sx, 6.8, 0.2),
                   rot=(-44, 6 * sx, 0), color=v.horn)
-        cube(h3, hp(1.6 * sx, 6.6, 4.8), hsz(1.5, 1.5, 9.5))
-        h4 = bone(f"horn_{side}_lo", head, hp(4.5 * sx, 3.8, 0.8),
+        cube(h3, hp(2.0 * sx, 6.8, 4.8), hsz(1.5, 1.5, 9.5))
+        h4 = bone(f"horn_{side}_lo", head, hp(5.2 * sx, 3.8, 0.8),
                   rot=(-14, 30 * sx, 0), color=v.horn)
-        cube(h4, hp(4.5 * sx, 3.8, 5.0), hsz(1.3, 1.3, 8.5))
+        cube(h4, hp(5.2 * sx, 3.8, 5.0), hsz(1.3, 1.3, 8.5))
 
 
 def build_wyvern(v: Variant):
