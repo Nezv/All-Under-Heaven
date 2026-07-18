@@ -49,6 +49,8 @@ TEXEL = 2   # texture pixels per model unit (per-face UV, not box UV)
 UV_PAD = 2  # gutter between UV islands so painted detail can't bleed
 SCALE = 1.35  # adult sizing: all authored geometry scales up at emit time,
               # which also buys texture density (texels are per unit)
+WING_BASE = 1.25  # base wing template multiplier (GoT wings dominate the
+                  # silhouette); variant wing_scale stacks on top
 
 # ---------------------------------------------------------------- model data
 
@@ -338,7 +340,7 @@ def build_wyvern(v: Variant):
 
     # --- wings: humerus -> forearm -> hand, finger spars + membranes ---
     # Built for the LEFT (+X) side, mirrored programmatically for the right.
-    ws = v.wing_scale
+    ws = v.wing_scale * WING_BASE
 
     def build_wing(side: str, sx: int):
         sh = (11 * sx, 31.0, -16.0)  # shoulder
@@ -673,6 +675,87 @@ def fly_vertical_channels(v: Variant):
     _tuck_legs(rot)
     # denser bake: the tanh dwell/snap needs a few more keys than a sine
     return T, _bake(ch, T, keys=12)
+
+
+def _smoothstep(a, b, t):
+    if t <= a:
+        return 0.0
+    if t >= b:
+        return 1.0
+    u = (t - a) / (b - a)
+    return u * u * (3 - 2 * u)
+
+
+def idle_channels(v: Variant):
+    """Land idle on the rest pose (sitting S-neck, standing legs): wings
+    FOLDED into the beach stance - humerus up-back, forearm dropped to the
+    planted knuckle, fingers arcing back - with slow breathing, a 120-degree
+    scout gaze (ease left, hold, sweep right, hold, return) distributed
+    along the neck, and a rapid shake-off roll rippling down the neck
+    before settling. 7s loop, baked dense for the shake."""
+    T = 7.0
+    ch: dict[str, dict[str, object]] = {}
+
+    def rot(b, f):
+        ch.setdefault(b, {})["rotation"] = f
+
+    def pos(b, f):
+        ch.setdefault(b, {})["position"] = f
+
+    def breath(t, phase=0.0):  # two slow breaths per loop
+        return math.sin(2 * math.pi * 2 * t / T + phase)
+
+    # --- folded wings: humerus rears up (elbow peaks over the back), the
+    # forearm plunges as a column to the low knuckle, fingers sweep back -
+    # the leading edge draws the beach-stance arc. Breathing sways the arm.
+    for side, sx in (("l", 1), ("r", -1)):
+        rot(f"wing_{side}_arm",
+            lambda t, s=sx: (0, -6 * s, s * (46 + 2.2 * breath(t))))
+        rot(f"wing_{side}_fore", (0, 10 * sx, -112 * sx))
+        rot(f"wing_{side}_hand", (0, -55 * sx, -8 * sx))
+        for fi in range(1, len(v.fingers) + 1):
+            rot(f"wing_{side}_finger{fi}", (0, -50 * sx, 0))
+
+    # --- scout gaze: +1 = dragon-left (-X), -1 = right, 0 = ahead ---
+    def gaze(t):
+        u = t / T
+        return (_smoothstep(0.03, 0.11, u) - 2.0 * _smoothstep(0.24, 0.40, u)
+                + _smoothstep(0.54, 0.62, u))
+
+    # --- shake-off: enveloped 2.2 Hz roll rippling root-to-head ---
+    def shake(t, phase):
+        u = t / T
+        if not 0.63 <= u <= 0.82:
+            return 0.0
+        env = math.sin(math.pi * (u - 0.63) / 0.19) ** 2
+        return env * math.sin(2 * math.pi * 2.2 * t - phase)
+
+    n = len(v.neck)
+    for i in range(1, n + 1):
+        rot(f"neck{i}",
+            lambda t, i=i: (0, (45.0 / n) * gaze(t) + 2.0 * shake(t, i * 0.8),
+                            4.5 * shake(t, i * 0.8)))
+    rot("head", lambda t: (0, 15.0 * gaze(t) + 6.0 * shake(t, (n + 1) * 0.8),
+                           10.0 * shake(t, (n + 1) * 0.8)))
+    rot("jaw", lambda t: (-1.6 * (0.5 - 0.5 * math.cos(2 * math.pi * 2 * t / T)),
+                          0, 0))
+
+    if v.whiskers:
+        for side in ("l", "r"):
+            rot(f"whisker_{side}_1", lambda t: (3.5 * breath(t, 0.6), 0, 0))
+            rot(f"whisker_{side}_2", lambda t: (5.0 * breath(t, 1.2), 0, 0))
+
+    # --- breathing body + gentle lateral tail sway ---
+    pos("body", lambda t: (0, 0.8 * SCALE * breath(t, -0.5), 0))
+    rot("body", lambda t: (1.0 * breath(t, -1.1), 0, 0))
+    m = len(v.tail) if v.tail else 7
+    for i in range(1, m + 1):
+        rot(f"tail{i}",
+            lambda t, i=i: (0, 2.6 * math.sin(2 * math.pi * t / T - i * 0.55), 0))
+    rot("tail_fin",
+        lambda t: (0, 3.4 * math.sin(2 * math.pi * t / T - (m + 1) * 0.55), 0))
+
+    return T, _bake(ch, T, keys=64)
 
 
 # ------------------------------------------------------------------ UV packer
@@ -1103,10 +1186,11 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
     return img
 
 
-def render_fly_previews(v: Variant, channels, length, tag, frames=16):
-    """A looping GIF of an airborne cycle + a 4x2 contact sheet of stills."""
-    cam = (2.0 / SCALE) / v.wing_scale ** 0.5  # zoom out for big-winged builds
-    imgs = [render(35, 16, None, size=(760, 600), scale=cam, ground=False,
+def render_fly_previews(v: Variant, channels, length, tag, frames=16,
+                        ground=False):
+    """A looping GIF of an animation cycle + a 4x2 contact sheet of stills."""
+    cam = (2.0 / SCALE) / (v.wing_scale * WING_BASE) ** 0.5
+    imgs = [render(35, 16, None, size=(760, 600), scale=cam, ground=ground,
                    pose=pose_at(channels, k * length / frames, length))
             for k in range(frames)]
     imgs[0].save(os.path.join(OUT_DIR, f"{v.name}_{tag}.gif"), save_all=True,
@@ -1346,8 +1430,10 @@ def build_variant(v: Variant):
     paint_texture(v, tex_path)
     fly_len, fly = fly_channels(v)
     vert_len, vert = fly_vertical_channels(v)
+    idle_len, idle = idle_channels(v)
     anims = [("animation.wyvern.fly", fly_len, fly),
-             ("animation.wyvern.fly_vertical", vert_len, vert)]
+             ("animation.wyvern.fly_vertical", vert_len, vert),
+             ("animation.wyvern.idle", idle_len, idle)]
     export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"),
                    f"wyvern_{v.name}",
                    animations=[bb_animation(*a) for a in anims],
@@ -1365,6 +1451,7 @@ def build_variant(v: Variant):
            size=(900, 700), scale=8.5 / SCALE, center=head)
     render_fly_previews(v, fly, fly_len, "fly")
     render_fly_previews(v, vert, vert_len, "flyvert")
+    render_fly_previews(v, idle, idle_len, "idle", frames=28, ground=True)
     print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
           f"fly={fly_len:.2f}s vert={vert_len:.2f}s head_at="
           f"({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
