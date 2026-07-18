@@ -361,25 +361,32 @@ def build_wyvern(v: Variant):
         # small wing claw hooking forward off the wrist
         cube(hand, (wrist[0] + 2 * sx, wrist[1] + 1, wrist[2] - 3.4), (1.6, 1.6, 5),
              color=v.horn)
-        # finger spars fan backward (+Z); membranes trail as thin plates
+        # TWO-SEGMENT fingers fanning backward (+Z): folded wings arc like
+        # ribs instead of hinging as one plane, and each segment carries its
+        # own narrower membrane STRIP - a layered fan, not a sheet
         base = (wrist[0] + 5 * sx, wrist[1], wrist[2])
         finger_count = len(v.fingers)
         for fi, (yaw, raw_len) in enumerate(v.fingers, 1):
             length = raw_len * ws
-            fname = bone(f"wing_{side}_finger{fi}", hand, base,
-                         rot=(0, -yaw * sx, 0), color=v.hide_dark)
-            cube(fname, (base[0] + (length / 2) * sx, base[1], base[2]),
-                 (length, 2.0, 2.0))
-            mem_len = length - 4
-            mem_depth = (22 if fi < finger_count else 17) * ws
-            mname = bone(f"wing_{side}_mem{fi}", fname, base, rot=(0, 0, 0),
-                         color=v.membrane)
-            cube(mname, (base[0] + (mem_len / 2 + 2) * sx, base[1] - 0.4,
-                         base[2] + mem_depth / 2 + 1.2), (mem_len, 0.6, mem_depth))
+            la, lb = length * 0.55, length * 0.5
+            depth = (22 if fi < finger_count else 17) * ws
+            fa = bone(f"wing_{side}_finger{fi}", hand, base,
+                      rot=(0, -yaw * sx, 0), color=v.hide_dark)
+            cube(fa, (base[0] + (la / 2) * sx, base[1], base[2]), (la, 2.0, 2.0))
+            cube(fa, (base[0] + (la / 2 + 1) * sx, base[1] - 0.4,
+                      base[2] + depth * 0.375 + 1.2), (la - 2, 0.6, depth * 0.75),
+                 color=v.membrane)
+            tip_a = (base[0] + la * sx, base[1], base[2])
+            fb = bone(f"wing_{side}_finger{fi}b", fa, tip_a,
+                      rot=(0, -6 * sx, 0), color=v.hide_dark)
+            cube(fb, (tip_a[0] + (lb / 2) * sx, tip_a[1], tip_a[2]),
+                 (lb, 1.5, 1.5))
+            cube(fb, (tip_a[0] + (lb / 2) * sx, tip_a[1] - 0.4,
+                      tip_a[2] + depth * 0.30 + 1.0), (lb - 1.5, 0.6, depth * 0.60),
+                 color=v.membrane)
         # armpit membrane between forearm and body
-        mroot = bone(f"wing_{side}_mem0", fore, elbow, color=v.membrane)
-        cube(mroot, (elbow[0] + 12 * ws * sx, elbow[1] - 1.2, elbow[2] + 8.5),
-             (24 * ws, 0.6, 14))
+        cube(fore, (elbow[0] + 12 * ws * sx, elbow[1] - 1.2, elbow[2] + 8.5),
+             (24 * ws, 0.6, 14), color=v.membrane)
 
     build_wing("l", 1)
     build_wing("r", -1)
@@ -559,6 +566,9 @@ def fly_channels(v: Variant):
         rot(f"wing_{side}_hand",
             lambda t, s=sx: (0, -s * 2.5 * (1 - math.cos(W * t - 1.6)),
                              s * 0.32 * amp * _skew_cos(W * t - 1.05)))
+        for fi in range(1, len(v.fingers) + 1):
+            rot(f"wing_{side}_finger{fi}b",
+                lambda t, s=sx: (0, -s * 2.5 * (1 - math.cos(W * t - 1.9)), 0))
 
     # body heaves with the lift: lowest at the top of the stroke, rising
     # through the powered downstroke; a subtle pitch rocks behind the heave
@@ -633,6 +643,9 @@ def fly_vertical_channels(v: Variant):
         rot(f"wing_{side}_hand",
             lambda t, s=sx: (0, -s * 3.0 * (1 - math.cos(theta(t) - 1.4)),
                              s * 0.32 * amp * _two_point(theta(t) - 0.95)))
+        for fi in range(1, len(v.fingers) + 1):
+            rot(f"wing_{side}_finger{fi}b",
+                lambda t, s=sx: (0, -s * 3.5 * (1 - math.cos(theta(t) - 1.7)), 0))
 
     # body: deep heave lagging the stroke, nose-up surge on the power-out
     pos("body", lambda t: (0, -2.6 * SCALE * math.cos(theta(t) - 0.6), 0))
@@ -687,6 +700,32 @@ def _smoothstep(a, b, t):
     return u * u * (3 - 2 * u)
 
 
+def _solve_plant(pose_base, fore_yaw=22.0, target_y=4.5):
+    """Finds the left forearm Z delta that lands the WRIST at target_y
+    (world, scaled units - claw clearance above the ground) given the rest
+    of the static pose. Bisects the branch between near-vertical (-128,
+    lowest reach) and shallow (-40, highest); per-variant wing lengths get
+    per-variant answers, which is what actually plants the knuckle."""
+    by = {b.name: b for b in BONES}
+    hand = by["wing_l_hand"]
+
+    def wrist_y(dz):
+        pose = dict(pose_base)
+        pose["wing_l_fore"] = {"rotation": (0.0, fore_yaw, dz)}
+        return bone_world_transform(pose)[hand.parent](hand.pivot)[1]
+
+    lo, hi = -128.0, -40.0
+    if wrist_y(lo) > target_y:
+        return lo  # wing too short to reach lower - plant as deep as it goes
+    for _ in range(28):
+        mid = (lo + hi) / 2
+        if wrist_y(mid) > target_y:
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
 def idle_channels(v: Variant):
     """Land idle on the rest pose (sitting S-neck, standing legs): wings
     FOLDED into the beach stance - humerus up-back, forearm dropped to the
@@ -707,17 +746,25 @@ def idle_channels(v: Variant):
         return math.sin(2 * math.pi * 2 * t / T + phase)
 
     # --- planted wings: the beach stance uses the wings as FRONT LEGS -
-    # humerus rises to an elbow peak over the back, the forearm drops a
-    # near-vertical column to a knuckle planted wide on the ground, and the
-    # fingers sweep back along it. The body crouches (legs bend below) so
-    # the knuckles actually reach the ground. Breathing sways the humerus.
+    # humerus rears the elbow over the back, the forearm drops a column to
+    # the knuckle, and the forearm angle is SOLVED per variant so the
+    # knuckle actually lands on the ground. The two-segment fingers then
+    # fan back in staggered arcs (folded wing ribs). Body crouches below.
+    static = {"body": {"position": (0, -9.0 * SCALE, 0)},
+              "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
+    for side in ("l", "r"):
+        static[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
+        static[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
+        static[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
+    plant_z = _solve_plant(static)
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
             lambda t, s=sx: (0, -10 * s, s * (30 + 2.2 * breath(t))))
-        rot(f"wing_{side}_fore", (0, 22 * sx, -118 * sx))
-        rot(f"wing_{side}_hand", (0, -80 * sx, -10 * sx))
+        rot(f"wing_{side}_fore", (0, 22 * sx, plant_z * sx))
+        rot(f"wing_{side}_hand", (0, -78 * sx, -10 * sx))
         for fi in range(1, len(v.fingers) + 1):
-            rot(f"wing_{side}_finger{fi}", (0, -80 * sx, 0))
+            rot(f"wing_{side}_finger{fi}", (0, -(52 + 7 * fi) * sx, 0))
+            rot(f"wing_{side}_finger{fi}b", (0, -(24 + 6 * fi) * sx, 0))
 
     # crouch: chest drops between the planted knuckles, hind legs fold
     for side in ("l", "r"):
