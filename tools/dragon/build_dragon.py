@@ -49,8 +49,9 @@ TEXEL = 2   # texture pixels per model unit (per-face UV, not box UV)
 UV_PAD = 2  # gutter between UV islands so painted detail can't bleed
 SCALE = 1.35  # adult sizing: all authored geometry scales up at emit time,
               # which also buys texture density (texels are per unit)
-WING_BASE = 1.25  # base wing template multiplier (GoT wings dominate the
-                  # silhouette); variant wing_scale stacks on top
+WING_BASE = 1.5   # base wing template multiplier (GoT wings dominate the
+                  # silhouette and must reach the ground when planted);
+                  # variant wing_scale stacks on top
 
 # ---------------------------------------------------------------- model data
 
@@ -705,16 +706,24 @@ def idle_channels(v: Variant):
     def breath(t, phase=0.0):  # two slow breaths per loop
         return math.sin(2 * math.pi * 2 * t / T + phase)
 
-    # --- folded wings: humerus rears up (elbow peaks over the back), the
-    # forearm plunges as a column to the low knuckle, fingers sweep back -
-    # the leading edge draws the beach-stance arc. Breathing sways the arm.
+    # --- planted wings: the beach stance uses the wings as FRONT LEGS -
+    # humerus rises to an elbow peak over the back, the forearm drops a
+    # near-vertical column to a knuckle planted wide on the ground, and the
+    # fingers sweep back along it. The body crouches (legs bend below) so
+    # the knuckles actually reach the ground. Breathing sways the humerus.
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
-            lambda t, s=sx: (0, -6 * s, s * (46 + 2.2 * breath(t))))
-        rot(f"wing_{side}_fore", (0, 10 * sx, -112 * sx))
-        rot(f"wing_{side}_hand", (0, -55 * sx, -8 * sx))
+            lambda t, s=sx: (0, -10 * s, s * (30 + 2.2 * breath(t))))
+        rot(f"wing_{side}_fore", (0, 22 * sx, -118 * sx))
+        rot(f"wing_{side}_hand", (0, -80 * sx, -10 * sx))
         for fi in range(1, len(v.fingers) + 1):
-            rot(f"wing_{side}_finger{fi}", (0, -50 * sx, 0))
+            rot(f"wing_{side}_finger{fi}", (0, -80 * sx, 0))
+
+    # crouch: chest drops between the planted knuckles, hind legs fold
+    for side in ("l", "r"):
+        rot(f"leg_{side}_thigh", (22, 0, 0))
+        rot(f"leg_{side}_shin", (-20, 0, 0))
+        rot(f"leg_{side}_foot", (-2, 0, 0))
 
     # --- scout gaze: +1 = dragon-left (-X), -1 = right, 0 = ahead ---
     def gaze(t):
@@ -730,13 +739,18 @@ def idle_channels(v: Variant):
         env = math.sin(math.pi * (u - 0.63) / 0.19) ** 2
         return env * math.sin(2 * math.pi * 2.2 * t - phase)
 
+    # gaze turns near the HEAD end (tip-heavy weights - the base barely
+    # moves, the last segments and head carry the 120 degrees); the shake
+    # is a pure Z TWIST about the neck's own axis (the dog shake), rolling
+    # root-to-head with growing amplitude - no yaw component at all
     n = len(v.neck)
+    wsum = sum((i / n) ** 2.5 for i in range(1, n + 1))
     for i in range(1, n + 1):
+        wgt = (i / n) ** 2.5 / wsum * 25.0
         rot(f"neck{i}",
-            lambda t, i=i: (0, (45.0 / n) * gaze(t) + 2.0 * shake(t, i * 0.8),
-                            4.5 * shake(t, i * 0.8)))
-    rot("head", lambda t: (0, 15.0 * gaze(t) + 6.0 * shake(t, (n + 1) * 0.8),
-                           10.0 * shake(t, (n + 1) * 0.8)))
+            lambda t, w=wgt, i=i: (0, w * gaze(t),
+                                   (2.0 + 6.0 * i / n) * shake(t, i * 0.7)))
+    rot("head", lambda t: (0, 35.0 * gaze(t), 15.0 * shake(t, (n + 1) * 0.7)))
     rot("jaw", lambda t: (-1.6 * (0.5 - 0.5 * math.cos(2 * math.pi * 2 * t / T)),
                           0, 0))
 
@@ -745,8 +759,8 @@ def idle_channels(v: Variant):
             rot(f"whisker_{side}_1", lambda t: (3.5 * breath(t, 0.6), 0, 0))
             rot(f"whisker_{side}_2", lambda t: (5.0 * breath(t, 1.2), 0, 0))
 
-    # --- breathing body + gentle lateral tail sway ---
-    pos("body", lambda t: (0, 0.8 * SCALE * breath(t, -0.5), 0))
+    # --- crouched, breathing body + gentle lateral tail sway ---
+    pos("body", lambda t: (0, SCALE * (-9.0 + 0.8 * breath(t, -0.5)), 0))
     rot("body", lambda t: (1.0 * breath(t, -1.1), 0, 0))
     m = len(v.tail) if v.tail else 7
     for i in range(1, m + 1):
