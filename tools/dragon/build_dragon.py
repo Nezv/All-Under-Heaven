@@ -272,17 +272,19 @@ def build_head(parent: str, tip: tuple[float, float, float], neck_pitch_sum: flo
     # horn crown: three pairs fanning back at different pitch/yaw - the
     # long main pair (two segments), a steep high pair, a wide low pair
     for side, sx in (("l", 1), ("r", -1)):
+        # +yaw carries a rear-pointing (+Z) part toward +X, so out-splay on
+        # the left (+X) side is POSITIVE yaw * sx - negative converges them
         h1 = bone(f"horn_{side}_1", head, hp(3.0 * sx, 5.2, 0.5),
-                  rot=(-26, -14 * sx, 0), color=v.horn)
+                  rot=(-26, 14 * sx, 0), color=v.horn)
         cube(h1, hp(3.0 * sx, 5.2, 5.5), hsz(2.4, 2.4, 11))
         h2 = bone(f"horn_{side}_2", h1, hp(3.0 * sx, 5.2, 11),
                   rot=(-16, 0, 0), color=v.horn)
         cube(h2, hp(3.0 * sx, 5.2, 15.5), hsz(1.5, 1.5, 10.5))
         h3 = bone(f"horn_{side}_hi", head, hp(1.6 * sx, 6.6, 0.2),
-                  rot=(-44, -6 * sx, 0), color=v.horn)
+                  rot=(-44, 6 * sx, 0), color=v.horn)
         cube(h3, hp(1.6 * sx, 6.6, 4.8), hsz(1.5, 1.5, 9.5))
         h4 = bone(f"horn_{side}_lo", head, hp(4.5 * sx, 3.8, 0.8),
-                  rot=(-14, -30 * sx, 0), color=v.horn)
+                  rot=(-14, 30 * sx, 0), color=v.horn)
         cube(h4, hp(4.5 * sx, 3.8, 5.0), hsz(1.3, 1.3, 8.5))
 
 
