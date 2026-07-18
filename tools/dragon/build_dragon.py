@@ -521,14 +521,14 @@ def fly_channels(v: Variant):
             rot(f"whisker_{side}_1", lambda t: (7 * math.sin(W * t - 2.4), 0, 0))
             rot(f"whisker_{side}_2", lambda t: (10 * math.sin(W * t - 3.1), 0, 0))
 
-    # tail: a vertical wave rippling tip-ward (a bit over one wavelength
-    # along the chain regardless of segment count), growing toward the tip
+    # tail: near-still in level cruise - just a faint ripple fading in
+    # toward the tip so it doesn't read as a rigid pole
     m = len(v.tail) if v.tail else 7
     for i in range(1, m + 1):
-        a = 1.1 + 3.4 * (i / m) ** 1.5
+        a = 0.35 + 1.05 * (i / m) ** 1.5
         ph = 0.7 + (i / m) * 2.3 * math.pi
         rot(f"tail{i}", lambda t, a=a, ph=ph: (a * math.sin(W * t - ph), 0, 0))
-    rot("tail_fin", lambda t: (5.5 * math.sin(W * t - 1.2 - 2.3 * math.pi), 0, 0))
+    rot("tail_fin", lambda t: (1.8 * math.sin(W * t - 1.2 - 2.3 * math.pi), 0, 0))
 
     _tuck_legs(rot)
     return T, _bake(ch, T)
@@ -597,16 +597,18 @@ def fly_vertical_channels(v: Variant):
             rot(f"whisker_{side}_1", lambda t: (9 * math.sin(theta(t) - 2.6), 0, 0))
             rot(f"whisker_{side}_2", lambda t: (13 * math.sin(theta(t) - 3.2), 0, 0))
 
-    # tail: deeper traveling wave than cruise, plus a uniform counter-curl -
-    # tucked up under the coil, whipping down-back on the stretch
+    # tail: pure inertia - a rope trailing the body's heave. The body dips
+    # as the wings push up, and each joint follows the INVERTED dip with a
+    # delay that grows down the chain and an amplitude that grows toward
+    # the tip, so the up-lash ripples through the intersections one after
+    # another instead of the whole tail snapping at once.
     m = len(v.tail) if v.tail else 7
     for i in range(1, m + 1):
-        a = 1.8 + 4.2 * (i / m) ** 1.5
-        ph = 0.9 + (i / m) * 2.0 * math.pi
+        a = (18.0 / m) * (0.45 + 1.15 * (i / m))
+        tau = (0.10 + 0.25 * (i / m)) * T
         rot(f"tail{i}",
-            lambda t, a=a, ph=ph: (
-                a * math.sin(theta(t) - ph) + stretch(t) * 9.0 / m, 0, 0))
-    rot("tail_fin", lambda t: (6.5 * math.sin(theta(t) - 1.3 - 2.0 * math.pi), 0, 0))
+            lambda t, a=a, tau=tau: (-a * math.cos(theta(t - tau) - 0.6), 0, 0))
+    rot("tail_fin", lambda t: (-5.5 * math.cos(theta(t - 0.41 * T) - 0.6), 0, 0))
 
     _tuck_legs(rot)
     # denser bake: the tanh dwell/snap needs a few more keys than a sine
