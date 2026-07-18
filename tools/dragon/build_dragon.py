@@ -502,15 +502,19 @@ def fly_channels(v: Variant):
     pos("body", lambda t: (0, -1.6 * math.cos(W * t), 0))
     rot("body", lambda t: (1.8 * math.sin(W * t - 2.1), 0, 0))
 
-    # neck: a small counter-wave travels head-ward across half a cycle; the
-    # head counter-pitches against the body so the gaze stays near-level.
-    # Per-segment amplitude divides by the chain length, so long necks bend
-    # the same total arc as short ones.
+    # neck: the rest pose is the SITTING posture (upright S) - in flight each
+    # segment cancels 80% of its own rest pitch, laying the neck out as a
+    # near-straight forward lance, with the head offset back to level. A
+    # small counter-wave travels head-ward on top; per-segment amplitude
+    # divides by chain length, so long necks bend the same total arc.
     n = len(v.neck)
-    for i in range(1, n + 1):
-        a, ph = 6.0 / n, math.pi + (i / n) * math.pi
-        rot(f"neck{i}", lambda t, a=a, ph=ph: (a * math.sin(W * t - ph), 0, 0))
-    rot("head", lambda t: (2.0 * math.sin(W * t - 2.1 - math.pi), 0, 0))
+    ps = sum(s[0] for s in v.neck)
+    for i, seg in enumerate(v.neck, 1):
+        r, a, ph = seg[0], 6.0 / n, math.pi + (i / n) * math.pi
+        rot(f"neck{i}",
+            lambda t, r=r, a=a, ph=ph: (
+                -0.8 * r + a * math.sin(W * t - ph), 0, 0))
+    rot("head", lambda t: (0.8 * ps + 2.0 * math.sin(W * t - 2.1 - math.pi), 0, 0))
 
     if v.whiskers:
         for side in ("l", "r"):
@@ -571,17 +575,21 @@ def fly_vertical_channels(v: Variant):
     pos("body", lambda t: (0, -2.6 * math.cos(theta(t) - 0.6), 0))
     rot("body", lambda t: (4.5 * math.sin(theta(t) - 2.6), 0, 0))
 
-    # neck: the swim. Each segment blends an upward reach with a FLATTENING
-    # of its own rest pitch, so stretching straightens the S-curve into a
-    # skyward line and coiling deepens it - and the wave ripples root-to-head
-    # (per-segment delay). Works for any segment count/curve by construction.
+    # neck: the swim, layered on a flight base that cancels 55% of the
+    # sitting rest pitch (airborne = laid out, not goose-upright). Each
+    # segment then blends an upward reach with a FLATTENING of its own rest
+    # pitch, so stretching straightens the S-curve into a skyward line
+    # (coil returns toward the tucked sit) - and the wave ripples
+    # root-to-head. Works for any segment count/curve by construction.
     n = len(v.neck)
+    ps = sum(s[0] for s in v.neck)
     for i, seg in enumerate(v.neck, 1):
         r, au = seg[0], 22.0 / n
         rot(f"neck{i}",
             lambda t, r=r, au=au, i=i: (
-                stretch(t - (i / n) * 0.14 * T) * (au - 0.5 * r), 0, 0))
-    rot("head", lambda t: (9.0 * stretch(t - 0.16 * T), 0, 0))
+                -0.55 * r + stretch(t - (i / n) * 0.14 * T) * (au - 0.5 * r),
+                0, 0))
+    rot("head", lambda t: (0.55 * ps + 9.0 * stretch(t - 0.16 * T), 0, 0))
     rot("jaw", lambda t: (-2.5 * (stretch(t - 0.16 * T) + 1) / 2, 0, 0))
 
     if v.whiskers:
