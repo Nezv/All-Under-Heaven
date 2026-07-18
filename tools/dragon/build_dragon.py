@@ -1132,6 +1132,15 @@ def export_bbmodel(path, model_name, animations=None, texture_path=None):
         json.dump(doc, f, indent=1)
 
 
+def _anim_convert(cname, vec):
+    """Generator-space animation deltas -> Blockbench-timeline (= bedrock
+    json) values. Blockbench's BoneAnimator applies keyframes as rotation
+    (-x, -y, +z) and position (-x, +y, +z) on top of the rest pose, and
+    GeckoLib replicates that, so X/Y rotation and X position flip sign."""
+    x, y, z = vec
+    return (-x, -y, z) if cname == "rotation" else (-x, y, z)
+
+
 def bb_animation(name, length, channels):
     """Blockbench-embedded animation: animators keyed by the bone uuids used
     in the outliner, one keyframe entry per baked key. Opens ready to play."""
@@ -1142,11 +1151,12 @@ def bb_animation(name, length, channels):
         for cname, keys in chans.items():
             interp = "catmullrom" if len(keys) > 1 else "linear"
             for t, vec in keys:
+                cx, cy, cz = _anim_convert(cname, vec)
                 kfs.append({
                     "channel": cname,
-                    "data_points": [{"x": str(round(vec[0], 3)),
-                                     "y": str(round(vec[1], 3)),
-                                     "z": str(round(vec[2], 3))}],
+                    "data_points": [{"x": str(round(cx, 3)),
+                                     "y": str(round(cy, 3)),
+                                     "z": str(round(cz, 3))}],
                     "uuid": str(uuid.uuid4()),
                     "time": t,
                     "color": -1,
@@ -1172,21 +1182,22 @@ def bb_animation(name, length, channels):
 
 def export_animation_json(path, anims):
     """GeckoLib (bedrock) animation file holding any number of animations
-    [(name, length, channels), ...]. Same X-mirror as the geometry export:
-    rotation [x,-y,-z], position [-x,y,z] vs Blockbench space."""
+    [(name, length, channels), ...]. Bedrock json takes the exact numbers a
+    Blockbench timeline shows, so it shares _anim_convert with bb_animation
+    (Blockbench's own bedrock exporter writes timeline values verbatim)."""
     animations = {}
     for name, length, channels in anims:
         bones = {}
         for bname, chans in channels.items():
             entry = {}
             for cname, keys in chans.items():
-                conv = ((lambda p: [p[0], -p[1], -p[2]]) if cname == "rotation"
-                        else (lambda p: [-p[0], p[1], p[2]]))
                 if len(keys) == 1:
-                    entry[cname] = [round(x, 3) for x in conv(keys[0][1])]
+                    entry[cname] = [round(x, 3)
+                                    for x in _anim_convert(cname, keys[0][1])]
                 else:
                     entry[cname] = {
-                        f"{t:g}": {"post": [round(x, 3) for x in conv(vec)],
+                        f"{t:g}": {"post": [round(x, 3) for x in
+                                            _anim_convert(cname, vec)],
                                    "lerp_mode": "catmullrom"}
                         for t, vec in keys
                     }
