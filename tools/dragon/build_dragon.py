@@ -44,9 +44,11 @@ from dataclasses import dataclass, field
 from PIL import Image, ImageDraw, ImageStat
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
-TEX_W, TEX_H = 1024, 1024
+TEX_W, TEX_H = 2048, 2048
 TEXEL = 2   # texture pixels per model unit (per-face UV, not box UV)
 UV_PAD = 2  # gutter between UV islands so painted detail can't bleed
+SCALE = 1.35  # adult sizing: all authored geometry scales up at emit time,
+              # which also buys texture density (texels are per unit)
 
 # ---------------------------------------------------------------- model data
 
@@ -156,14 +158,16 @@ def reset():
 
 
 def bone(name, parent, pivot, rot=(0, 0, 0), color=(140, 140, 140)):
+    pivot = tuple(p * SCALE for p in pivot)
     BONES.append(Bone(name, parent, pivot, rot, color, str(uuid.uuid4())))
     return name
 
 
 def cube(bone_name, center, size, inflate=0.0, mirror=False, color=None):
-    """Axis-aligned cube from center + size (pre-bone-rotation)."""
-    cx, cy, cz = center
-    sx, sy, sz = size
+    """Axis-aligned cube from center + size (pre-bone-rotation, unscaled
+    authoring units - SCALE is applied here)."""
+    cx, cy, cz = (a * SCALE for a in center)
+    sx, sy, sz = (a * SCALE for a in size)
     CUBES.append(Cube(bone_name, (cx - sx / 2, cy - sy / 2, cz - sz / 2),
                       (cx + sx / 2, cy + sy / 2, cz + sz / 2), inflate, mirror, color))
 
@@ -171,83 +175,115 @@ def cube(bone_name, center, size, inflate=0.0, mirror=False, color=None):
 # ------------------------------------------------------------ wyvern anatomy
 
 def build_head(parent: str, tip: tuple[float, float, float], neck_pitch_sum: float, v: Variant):
-    """Predatory head: layered skull, hooded brow over inset eyes, tapering
-    down-angled snout with a hooked tip, parted fanged jaw, cheek flares and
-    swept horns. Small sub-bones carry the angles so nothing is a plain box
-    stack, and the jaw/head stay animatable."""
-    head = bone("head", parent, tip, rot=(-neck_pitch_sum, 0, 0), color=v.hide)
+    """GoT-referenced predatory head: a long, low crocodilian skull under a
+    swept-back horn CROWN (three fanning pairs), studded brow hooding inset
+    eyes, armored skull sides, ridged snout with flared nostrils and a
+    hooked tip, overlapping fang rows, jaw spur rows with chin barbels, and
+    cheek horn clusters. Everything is authored in head-local offsets so hs
+    scales the whole head about its root (adult heads read bigger); the
+    jaw/brow/crest/tip stay separate bones for animation."""
+    hs = 1.18
     hx, hy, hz = tip
 
-    # skull core + rear crest fin
-    cube(head, (hx, hy + 1.6, hz - 4.5), (8.6, 7.6, 11))
-    crest = bone("head_crest", head, (hx, hy + 5.2, hz - 1), rot=(-34, 0, 0), color=v.ridge)
-    cube(crest, (hx, hy + 6.4, hz + 2.5), (1.2, 4.4, 8))
+    def hp(dx, dy, dz):  # head-local offset -> model point, scaled about root
+        return (hx + dx * hs, hy + dy * hs, hz + dz * hs)
 
-    # hooded brow: a ledge wider than the skull, dipping down DIRECTLY over
-    # the eye line so the eyes sit in shadow — the predatory stare.
-    brow = bone("brow", head, (hx, hy + 4.8, hz - 7.5), rot=(-12, 0, 0), color=v.hide_dark)
-    cube(brow, (hx, hy + 5.1, hz - 8.6), (9.0, 2.0, 5.6))
+    def hsz(a, b, c):
+        return (a * hs, b * hs, c * hs)
+
+    head = bone("head", parent, tip, rot=(-neck_pitch_sum, 0, 0), color=v.hide)
+
+    # skull core + armored side plates
+    cube(head, hp(0, 1.6, -4.5), hsz(8.6, 7.6, 11))
+    for sx in (1, -1):
+        cube(head, hp(4.0 * sx, 2.6, -2.5), hsz(1.2, 4.5, 6.5), color=v.hide_dark)
+
+    # crest: main fin + trailing fin + flanking root spikes (hands the
+    # silhouette off to the neck spike row)
+    crest = bone("head_crest", head, hp(0, 5.2, -1), rot=(-34, 0, 0), color=v.ridge)
+    cube(crest, hp(0, 6.4, 2.5), hsz(1.2, 4.4, 8))
+    cube(crest, hp(0, 5.6, 7.2), hsz(1.0, 3.2, 5))
+    for sx in (1, -1):
+        cube(head, hp(1.3 * sx, 5.8, 1.5), hsz(0.7, 2.4, 0.7), color=v.horn)
+
+    # hooded brow ledge with stud spikes over each eye
+    brow = bone("brow", head, hp(0, 4.8, -7.5), rot=(-12, 0, 0), color=v.hide_dark)
+    cube(brow, hp(0, 5.1, -8.6), hsz(9.0, 2.0, 5.6))
+    for sx in (1, -1):
+        cube(brow, hp(2.6 * sx, 6.3, -7.8), hsz(0.9, 2.4, 0.9), color=v.horn)
+        cube(brow, hp(4.1 * sx, 5.9, -6.8), hsz(0.8, 1.8, 0.8), color=v.horn)
 
     # eyes: dark socket rims with proud, bright eye cubes (variant color)
     for sx in (1, -1):
-        cube(head, (4.0 * sx + hx, hy + 3.3, hz - 7.2), (1.1, 3.0, 3.6), color=v.socket)
-        cube(head, (4.5 * sx + hx, hy + 3.3, hz - 7.2), (0.8, 2.2, 2.8), color=v.eye)
+        cube(head, hp(4.0 * sx, 3.3, -7.2), hsz(1.1, 3.0, 3.6), color=v.socket)
+        cube(head, hp(4.5 * sx, 3.3, -7.2), hsz(0.8, 2.2, 2.8), color=v.eye)
 
-    # snout: slight droop, ridge on top, hooked tip
-    snout = bone("snout", head, (hx, hy + 2.4, hz - 10), rot=(-5, 0, 0), color=v.hide)
-    cube(snout, (hx, hy + 2.9, hz - 15.3), (5.4, 3.6, 11.5))
-    cube(snout, (hx, hy + 4.8, hz - 14), (2.6, 1.2, 8))
-    tip_b = bone("snout_tip", snout, (hx, hy + 2.4, hz - 20.5), rot=(-12, 0, 0), color=v.hide)
-    cube(tip_b, (hx, hy + 2.4, hz - 22.6), (4.4, 3.2, 5.2))
-    cube(tip_b, (hx, hy + 1.1, hz - 24.3), (3.2, 1.8, 2.4))          # hooked tip
+    # snout: slight droop, top ridge, nasal ridge and hooked tip
+    snout = bone("snout", head, hp(0, 2.4, -10), rot=(-5, 0, 0), color=v.hide)
+    cube(snout, hp(0, 2.9, -15.3), hsz(5.4, 3.6, 11.5))
+    cube(snout, hp(0, 4.8, -14), hsz(2.6, 1.2, 8))
+    tip_b = bone("snout_tip", snout, hp(0, 2.4, -20.5), rot=(-12, 0, 0), color=v.hide)
+    cube(tip_b, hp(0, 2.4, -22.6), hsz(4.4, 3.2, 5.2))
+    cube(tip_b, hp(0, 1.1, -24.3), hsz(3.2, 1.8, 2.4))               # hooked tip
+    cube(tip_b, hp(0, 3.9, -22.2), hsz(1.8, 0.9, 3.6), color=v.ridge)  # nasal ridge
     for sx in (1, -1):
-        cube(tip_b, (1.4 * sx + hx, hy + 4.0, hz - 23.2), (1.0, 0.8, 1.8),
-             color=v.hide_dark)                                       # nostrils
+        cube(tip_b, hp(1.5 * sx, 4.0, -23.2), hsz(1.2, 1.0, 2.2),
+             color=v.hide_dark)                                       # flared nostrils
         # long front fangs off the tip, the wolf-teeth of the profile
-        cube(tip_b, (1.5 * sx + hx, hy + 0.4, hz - 23.4), (0.7, 2.2, 0.8),
-             color=v.teeth)
+        cube(tip_b, hp(1.5 * sx, 0.4, -23.4), hsz(0.7, 2.2, 0.8), color=v.teeth)
 
     # ethereal variants: thin whisker barbels trailing back off the snout,
     # drooping in two segments past the jaw line
     if v.whiskers:
         for side, sx in (("l", 1), ("r", -1)):
-            w1 = bone(f"whisker_{side}_1", tip_b, (2.4 * sx + hx, hy + 1.8, hz - 21.5),
+            w1 = bone(f"whisker_{side}_1", tip_b, hp(2.4 * sx, 1.8, -21.5),
                       rot=(10, 34 * sx, 0), color=v.horn)
-            cube(w1, (2.4 * sx + hx, hy + 1.8, hz - 17), (0.6, 0.6, 10))
-            w2 = bone(f"whisker_{side}_2", w1, (2.4 * sx + hx, hy + 1.8, hz - 12),
+            cube(w1, hp(2.4 * sx, 1.8, -17), hsz(0.6, 0.6, 10))
+            w2 = bone(f"whisker_{side}_2", w1, hp(2.4 * sx, 1.8, -12),
                       rot=(18, 10 * sx, 0), color=v.horn)
-            cube(w2, (2.4 * sx + hx, hy + 1.8, hz - 7.5), (0.45, 0.45, 10))
+            cube(w2, hp(2.4 * sx, 1.8, -7.5), hsz(0.45, 0.45, 10))
 
-    # discrete upper fangs along the lip line (not a strip — actual teeth)
+    # overlapping upper fang rows along the lip line (varied heights)
     for sx in (1, -1):
-        for fz, fh in ((-12.6, 1.3), (-15.2, 1.5), (-17.6, 1.2)):
-            cube(snout, (2.25 * sx + hx, hy + 0.6, hz + fz), (0.6, fh, 0.8),
-                 color=v.teeth)
+        for fz, fh in ((-11.8, 1.2), (-13.6, 1.5), (-15.4, 1.2), (-17.2, 1.4),
+                       (-18.8, 1.1)):
+            cube(snout, hp(2.25 * sx, 0.6, fz), hsz(0.6, fh, 0.8), color=v.teeth)
 
-    # parted lower jaw: dark mouth shadow, upward teeth, chin
-    jaw = bone("jaw", head, (hx, hy - 0.9, hz - 2), rot=(-13, 0, 0), color=v.hide_dark)
-    cube(jaw, (hx, hy - 1.7, hz - 10.8), (4.6, 2.2, 16))
-    cube(jaw, (hx, hy - 0.35, hz - 10.5), (3.8, 1.1, 13), color=(42, 16, 18))
+    # parted lower jaw: dark mouth shadow, teeth, spur row, barbels, chin
+    jaw = bone("jaw", head, hp(0, -0.9, -2), rot=(-13, 0, 0), color=v.hide_dark)
+    cube(jaw, hp(0, -1.7, -10.8), hsz(4.6, 2.2, 16))
+    cube(jaw, hp(0, -0.35, -10.5), hsz(3.8, 1.1, 13), color=(42, 16, 18))
     for sx in (1, -1):
-        for fz in (-13.6, -16.4):
-            cube(jaw, (1.85 * sx + hx, hy - 0.1, hz + fz), (0.55, 1.2, 0.7),
-                 color=v.teeth)
-    cube(jaw, (hx, hy - 2.3, hz - 19.3), (3.4, 1.8, 3))
+        for fz, fh in ((-12.4, 1.1), (-14.8, 1.3), (-17.0, 1.0)):
+            cube(jaw, hp(1.85 * sx, -0.1, fz), hsz(0.55, fh, 0.7), color=v.teeth)
+        for jz in (-5.5, -9.5, -13.5):  # mandible spurs marching down the jaw
+            cube(jaw, hp(1.9 * sx, -2.9, jz), hsz(0.7, 1.6, 0.7), color=v.horn)
+        cube(jaw, hp(0.9 * sx, -3.3, -18.2), hsz(0.6, 1.5, 0.6), color=v.horn)
+    cube(jaw, hp(0, -2.3, -19.3), hsz(3.4, 1.8, 3))
 
-    # cheek flares: thin plates yawed outward for an angular skull
+    # cheek flares with horn clusters sweeping back-out
     for side, sx in (("l", 1), ("r", -1)):
-        flare = bone(f"cheek_{side}", head, (4.2 * sx + hx, hy + 2, hz + 0.5),
+        flare = bone(f"cheek_{side}", head, hp(4.2 * sx, 2, 0.5),
                      rot=(0, 26 * sx, 0), color=v.hide_dark)
-        cube(flare, (4.6 * sx + hx, hy + 1.8, hz + 3.8), (0.8, 5, 7.5), mirror=sx < 0)
+        cube(flare, hp(4.6 * sx, 1.8, 3.8), hsz(0.8, 5, 7.5), mirror=sx < 0)
+        cube(flare, hp(5.1 * sx, 1.0, 6.6), hsz(0.8, 0.8, 3.4), color=v.horn)
+        cube(flare, hp(5.1 * sx, 3.2, 7.0), hsz(0.7, 0.7, 2.8), color=v.horn)
 
-    # horns: two segments each, swept back and out
+    # horn crown: three pairs fanning back at different pitch/yaw - the
+    # long main pair (two segments), a steep high pair, a wide low pair
     for side, sx in (("l", 1), ("r", -1)):
-        h1 = bone(f"horn_{side}_1", head, (3.0 * sx + hx, hy + 5.2, hz + 0.5),
+        h1 = bone(f"horn_{side}_1", head, hp(3.0 * sx, 5.2, 0.5),
                   rot=(-26, -14 * sx, 0), color=v.horn)
-        cube(h1, (3.0 * sx + hx, hy + 5.2, hz + 5.5), (2.2, 2.2, 11))
-        h2 = bone(f"horn_{side}_2", h1, (3.0 * sx + hx, hy + 5.2, hz + 11),
+        cube(h1, hp(3.0 * sx, 5.2, 5.5), hsz(2.4, 2.4, 11))
+        h2 = bone(f"horn_{side}_2", h1, hp(3.0 * sx, 5.2, 11),
                   rot=(-16, 0, 0), color=v.horn)
-        cube(h2, (3.0 * sx + hx, hy + 5.2, hz + 15.5), (1.4, 1.4, 10))
+        cube(h2, hp(3.0 * sx, 5.2, 15.5), hsz(1.5, 1.5, 10.5))
+        h3 = bone(f"horn_{side}_hi", head, hp(1.6 * sx, 6.6, 0.2),
+                  rot=(-44, -6 * sx, 0), color=v.horn)
+        cube(h3, hp(1.6 * sx, 6.6, 4.8), hsz(1.5, 1.5, 9.5))
+        h4 = bone(f"horn_{side}_lo", head, hp(4.5 * sx, 3.8, 0.8),
+                  rot=(-14, -30 * sx, 0), color=v.horn)
+        cube(h4, hp(4.5 * sx, 3.8, 5.0), hsz(1.3, 1.3, 8.5))
 
 
 def build_wyvern(v: Variant):
@@ -266,11 +302,27 @@ def build_wyvern(v: Variant):
     for i, (pitch, length, w, h) in enumerate(v.neck, 1):
         name = bone(f"neck{i}", parent, tip, rot=(pitch, 0, 0), color=v.hide)
         cube(name, (tip[0], tip[1] + 0.5, tip[2] - length / 2), (w, h, length + 2))
-        cube(name, (tip[0], tip[1] + h / 2 + 1.2, tip[2] - length / 2),
-             (1.4, 3.2, length - 3), color=v.ridge)
-        # gular throat plate
+        # dorsal armor: low base strip + big/small spike pair per segment
+        # (the GoT double spike row running head to shoulders)
+        cube(name, (tip[0], tip[1] + h / 2 + 1.0, tip[2] - length / 2),
+             (1.4, 2.2, length - 3), color=v.ridge)
+        cube(name, (tip[0], tip[1] + h / 2 + 3.1, tip[2] - length * 0.32),
+             (1.1, 3.4, 1.1), color=v.horn)
+        cube(name, (tip[0], tip[1] + h / 2 + 2.6, tip[2] - length * 0.72),
+             (0.8, 2.2, 0.8), color=v.horn)
+        # side spurs + an armor scale plate alternating sides per segment
+        for sxs in (1, -1):
+            cube(name, (tip[0] + sxs * (w / 2 + 0.35), tip[1] + 1.2,
+                        tip[2] - length * 0.55), (0.9, 0.9, 2.8), color=v.horn)
+        alt = 1 if i % 2 else -1
+        cube(name, (tip[0] + alt * (w / 2 + 0.1), tip[1] - 0.6,
+                    tip[2] - length * 0.38), (0.6, h * 0.34, length * 0.4),
+             color=v.hide_dark)
+        # ribbed double gular band down the throat
         cube(name, (tip[0], tip[1] + 0.5 - h / 2 - 0.4, tip[2] - length / 2),
              (w - 3.5, 2.0, length - 2), color=v.belly)
+        cube(name, (tip[0], tip[1] + 0.5 - h / 2 - 0.6, tip[2] - length * 0.28),
+             (w - 2.6, 1.9, length * 0.34), color=v.belly)
         tip = (tip[0], tip[1], tip[2] - length)
         parent = name
 
@@ -499,7 +551,7 @@ def fly_channels(v: Variant):
 
     # body heaves with the lift: lowest at the top of the stroke, rising
     # through the powered downstroke; a subtle pitch rocks behind the heave
-    pos("body", lambda t: (0, -1.6 * math.cos(W * t), 0))
+    pos("body", lambda t: (0, -1.6 * SCALE * math.cos(W * t), 0))
     rot("body", lambda t: (1.8 * math.sin(W * t - 2.1), 0, 0))
 
     # neck: the rest pose is the SITTING posture (upright S) - in flight each
@@ -572,7 +624,7 @@ def fly_vertical_channels(v: Variant):
                              s * 0.32 * amp * _two_point(theta(t) - 0.95)))
 
     # body: deep heave lagging the stroke, nose-up surge on the power-out
-    pos("body", lambda t: (0, -2.6 * math.cos(theta(t) - 0.6), 0))
+    pos("body", lambda t: (0, -2.6 * SCALE * math.cos(theta(t) - 0.6), 0))
     rot("body", lambda t: (4.5 * math.sin(theta(t) - 2.6), 0, 0))
 
     # neck: the swim, layered on a flight base that cancels 55% of the
@@ -963,7 +1015,10 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
     # drawn-then-overdrawn - detail cubes interpenetrate on purpose)
     EPS = 0.05
     boxes = []
-    for c in CUBES:
+    for bi, c in enumerate(CUBES):
+        vol = ((c.hi[0] - c.lo[0]) * (c.hi[1] - c.lo[1]) * (c.hi[2] - c.lo[2]))
+        if vol < 25:  # tiny spikes/teeth can't meaningfully bury a face
+            continue
         fn = transforms[c.bone]
         o = fn((0.0, 0.0, 0.0))
         ax = [tuple(a - b for a, b in zip(fn(u), o))
@@ -972,10 +1027,10 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
         hi = (c.hi[0] + c.inflate, c.hi[1] + c.inflate, c.hi[2] + c.inflate)
         ctr = fn(tuple((a + b) / 2 for a, b in zip(c.lo, c.hi)))
         hd2 = sum(((hi[k] - lo[k]) / 2) ** 2 for k in range(3)) + 1.0
-        boxes.append((o, ax, lo, hi, ctr, hd2))
+        boxes.append((bi, o, ax, lo, hi, ctr, hd2))
 
     def buried(fc, self_i):
-        for j, (o, ax, lo, hi, ctr, hd2) in enumerate(boxes):
+        for j, o, ax, lo, hi, ctr, hd2 in boxes:
             if j == self_i:
                 continue
             if sum((fc[k] - ctr[k]) ** 2 for k in range(3)) > hd2:
@@ -1036,7 +1091,7 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
 
 def render_fly_previews(v: Variant, channels, length, tag, frames=16):
     """A looping GIF of an airborne cycle + a 4x2 contact sheet of stills."""
-    cam = 2.0 / v.wing_scale ** 0.5  # zoom out for the big-winged builds
+    cam = (2.0 / SCALE) / v.wing_scale ** 0.5  # zoom out for big-winged builds
     imgs = [render(35, 16, None, size=(760, 600), scale=cam, ground=False,
                    pose=pose_at(channels, k * length / frames, length))
             for k in range(frames)]
@@ -1287,12 +1342,13 @@ def build_variant(v: Variant):
                f"geometry.allunderheaven.wyvern_{v.name}")
     export_animation_json(os.path.join(OUT_DIR, f"wyvern_{v.name}.animation.json"),
                           anims)
-    render(35, 18, os.path.join(OUT_DIR, f"{v.name}_three_quarter.png"))
-    render(90, 5, os.path.join(OUT_DIR, f"{v.name}_side.png"))
-    render(0, 8, os.path.join(OUT_DIR, f"{v.name}_front.png"))
+    render(35, 18, os.path.join(OUT_DIR, f"{v.name}_three_quarter.png"),
+           scale=3.0 / SCALE)
+    render(90, 5, os.path.join(OUT_DIR, f"{v.name}_side.png"), scale=3.0 / SCALE)
+    render(0, 8, os.path.join(OUT_DIR, f"{v.name}_front.png"), scale=3.0 / SCALE)
     head = bone_world_pivot("head")
     render(52, 10, os.path.join(OUT_DIR, f"{v.name}_head.png"),
-           size=(900, 700), scale=8.5, center=head)
+           size=(900, 700), scale=8.5 / SCALE, center=head)
     render_fly_previews(v, fly, fly_len, "fly")
     render_fly_previews(v, vert, vert_len, "flyvert")
     print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
