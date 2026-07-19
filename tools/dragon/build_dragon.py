@@ -102,6 +102,9 @@ class Variant:
     neck: tuple = ((34, 13, 13, 12), (16, 12, 11, 11), (-6, 12, 10, 10), (-20, 12, 8.5, 9))
     #             (pitch, length, width, height) per tail segment (None = stock)
     tail: tuple | None = None
+    #             breath gradient (core, mid, outer) - each dragon burns its
+    #             own color; drives previews now, particle tint in-game later
+    fire: tuple = ((255, 236, 150), (255, 148, 42), (208, 64, 18))
 
 
 BLACK = Variant(
@@ -116,6 +119,7 @@ BLACK = Variant(
     belly=(104, 100, 112),
     wing_scale=1.69,                # 1.3 base, then +30% per request
     fingers=((10, 48), (30, 46), (50, 42), (70, 36)),
+    fire=((255, 138, 66), (198, 46, 28), (96, 30, 26)),  # smoky crimson ember
 )
 
 WHITE = Variant(
@@ -142,6 +146,7 @@ WHITE = Variant(
     tail=((14, 15, 12, 11), (10, 15, 10.8, 9.9), (6, 15, 9.6, 8.8),
           (2, 16, 8.4, 7.7), (-3, 16, 7.2, 6.6), (-7, 16, 6, 5.5),
           (-9, 16, 4.8, 4.4), (-9, 17, 3.6, 3.4), (-8, 18, 2.4, 2.4)),
+    fire=((228, 246, 255), (130, 190, 255), (56, 110, 225)),  # ice-blue flame
 )
 
 RED = Variant(
@@ -740,6 +745,42 @@ def _solve_plant(pose_base, fore_yaw=22.0, target_y=4.5):
     return (lo + hi) / 2
 
 
+def _ground_stance(v: Variant):
+    """The planted beach stance shared by every ground animation: body
+    crouched between the wing-forelimbs, hind legs folded, forearms dropped
+    to the per-variant solved knuckle plant, fingers fanned back as folded
+    ribs. Returns (static_channels, plant_z); animations layer motion by
+    overwriting any entry with a time function."""
+    base = {"body": {"position": (0, -9.0 * SCALE, 0)},
+            "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
+    for side in ("l", "r"):
+        base[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
+    plant_z = _solve_plant(base)
+    st: dict[str, dict[str, object]] = {
+        "body": {"position": (0, -9.0 * SCALE, 0)}}
+    n_f = len(v.fingers)
+    for side, sx in (("l", 1), ("r", -1)):
+        st[f"wing_{side}_arm"] = {"rotation": (0, -10 * sx, 30 * sx)}
+        st[f"wing_{side}_fore"] = {"rotation": (0, 22 * sx, plant_z * sx)}
+        # with the forearm near-vertical, finger yaw sweeps the SAGITTAL
+        # plane (local +X points at the ground, -90 is horizontal-back, past
+        # -90 rises): all ribs radiate from the planted wrist, the front rib
+        # climbing steepest, each one behind shallower - the reference fan.
+        for fi, (yaw_rest, _fl) in enumerate(v.fingers, 1):
+            t_f = (fi - 1) / max(1, n_f - 1)
+            target = -(156.0 - 46.0 * t_f)  # total local yaw: steep -> shallow
+            st[f"wing_{side}_finger{fi}"] = {
+                "rotation": (0, (target + yaw_rest) * sx, 0)}
+            st[f"wing_{side}_finger{fi}b"] = {
+                "rotation": (0, -(38.0 - 10.0 * t_f) * sx, 0)}
+        st[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
+        st[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
+        st[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
+    return st, plant_z
+
+
 def idle_channels(v: Variant):
     """Land idle on the rest pose (sitting S-neck, standing legs): wings
     FOLDED into the beach stance - humerus up-back, forearm dropped to the
@@ -759,39 +800,16 @@ def idle_channels(v: Variant):
     def breath(t, phase=0.0):  # two slow breaths per loop
         return math.sin(2 * math.pi * 2 * t / T + phase)
 
-    # --- planted wings: the beach stance uses the wings as FRONT LEGS -
-    # humerus rears the elbow over the back, the forearm drops a column to
-    # the knuckle, and the forearm angle is SOLVED per variant so the
-    # knuckle actually lands on the ground. The two-segment fingers then
-    # fan back in staggered arcs (folded wing ribs). Body crouches below.
-    static = {"body": {"position": (0, -9.0 * SCALE, 0)},
-              "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
-    for side in ("l", "r"):
-        static[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
-        static[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
-        static[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
-    plant_z = _solve_plant(static)
-    # with the forearm near-vertical, finger yaw sweeps the SAGITTAL plane:
-    # local +X points at the ground, -90 is horizontal-back, past -90 rises.
-    # All ribs radiate from the planted wrist - the front rib climbs
-    # steepest (~78 deg up), each one behind is shallower, and the outer
-    # (b) segments hook over harder at the front - the reference fan.
-    n_f = len(v.fingers)
+    # --- planted wings: the beach stance uses the wings as FRONT LEGS
+    # (shared _ground_stance: solved knuckle plant + finger fan + crouch);
+    # slow breathing rides the planted humerus on top
+    st, _plant = _ground_stance(v)
+    for b, chans in st.items():
+        for cname, vec in chans.items():
+            ch.setdefault(b, {})[cname] = vec
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
             lambda t, s=sx: (0, -10 * s, s * (30 + 2.2 * breath(t))))
-        rot(f"wing_{side}_fore", (0, 22 * sx, plant_z * sx))
-        for fi, (yaw_rest, _fl) in enumerate(v.fingers, 1):
-            t_f = (fi - 1) / max(1, n_f - 1)
-            target = -(156.0 - 46.0 * t_f)  # total local yaw: steep -> shallow
-            rot(f"wing_{side}_finger{fi}", (0, (target + yaw_rest) * sx, 0))
-            rot(f"wing_{side}_finger{fi}b", (0, -(38.0 - 10.0 * t_f) * sx, 0))
-
-    # crouch: chest drops between the planted knuckles, hind legs fold
-    for side in ("l", "r"):
-        rot(f"leg_{side}_thigh", (22, 0, 0))
-        rot(f"leg_{side}_shin", (-20, 0, 0))
-        rot(f"leg_{side}_foot", (-2, 0, 0))
 
     # --- scout gaze: +1 = dragon-left (-X), -1 = right, 0 = ahead ---
     def gaze(t):
@@ -838,6 +856,217 @@ def idle_channels(v: Variant):
         lambda t: (0, 3.4 * math.sin(2 * math.pi * t / T - (m + 1) * 0.55), 0))
 
     return T, _bake(ch, T, keys=64)
+
+
+def walk_channels(v: Variant):
+    """Ground walk on the planted-wing stance: the folded wings ARE the
+    front legs (the GoT wyvern gait). Lateral-sequence walk - left hind,
+    left wing, right hind, right wing - each limb raking back through its
+    stance and swinging forward with a clearance lift, while the body rolls
+    onto the planted shoulder, heaves twice a cycle, and wags a slow yaw;
+    the neck counter-sways with a step bob fading toward the steady head,
+    and the tail whips the opposite way down its chain. Heavy and slow -
+    period scales with the wing (= body) size like the flight beats."""
+    T = 2.9 * v.wing_scale ** 0.2
+    ch: dict[str, dict[str, object]] = {}
+
+    def rot(b, f):
+        ch.setdefault(b, {})["rotation"] = f
+
+    def pos(b, f):
+        ch.setdefault(b, {})["position"] = f
+
+    st, _pz = _ground_stance(v)
+    for b, chans in st.items():
+        for cname, vec in chans.items():
+            ch.setdefault(b, {})[cname] = vec
+
+    # walking rides higher than the sitting crouch: body up, legs longer,
+    # forearm plant re-solved for the raised shoulder
+    base = {"body": {"position": (0, -7.8 * SCALE, 0)},
+            "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
+    for side in ("l", "r"):
+        base[f"leg_{side}_thigh"] = {"rotation": (19, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (-17, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
+    plant_z = _solve_plant(base)
+
+    SW = 0.30  # fraction of the cycle each limb spends in the air
+
+    def gait(t, p):
+        """Fore-aft swing at phase offset p: +1 leading .. -1 trailing.
+        Swing = eased forward recovery, stance = linear rake back."""
+        u = (t / T - p) % 1.0
+        if u < SW:
+            return -math.cos(math.pi * u / SW)
+        return 1 - 2 * (u - SW) / (1 - SW)
+
+    def lift(t, p):
+        """Vertical clearance bump during the swing phase only."""
+        u = (t / T - p) % 1.0
+        return math.sin(math.pi * u / SW) if u < SW else 0.0
+
+    # lateral-sequence footfall: LH 0.00, LF 0.25, RH 0.50, RF 0.75
+    PH = {"leg_l": 0.00, "wing_l": 0.25, "leg_r": 0.50, "wing_r": 0.75}
+
+    # hind legs: the thigh pendulums about X (+X swings the down-pointing
+    # femur forward), the knee folds through the swing for clearance and
+    # the foot rolls toe-down into the lift, flat through the stance
+    for side in ("l", "r"):
+        p = PH[f"leg_{side}"]
+        rot(f"leg_{side}_thigh",
+            lambda t, p=p: (19 + 15.0 * gait(t, p), 0, 0))
+        rot(f"leg_{side}_shin",
+            lambda t, p=p: (-17 - 17.0 * lift(t, p), 0, 0))
+        rot(f"leg_{side}_foot",
+            lambda t, p=p: (-2 - 9.0 * lift(t, p) + 4.0 * gait(t, p), 0, 0))
+
+    # wing forelimbs: the humerus pendulums about X (elbow back = wrist
+    # back), the forearm eases its solved plant angle open during the swing
+    # so the knuckle unweights and clears, and the shoulder hikes a touch
+    for side, sx in (("l", 1), ("r", -1)):
+        p = PH[f"wing_{side}"]
+        rot(f"wing_{side}_arm",
+            lambda t, s=sx, p=p: (-9.0 * gait(t, p), -10 * s,
+                                  s * (30 + 3.0 * lift(t, p))))
+        rot(f"wing_{side}_fore",
+            lambda t, s=sx, p=p: (0, 22 * s,
+                                  s * (plant_z + 16.0 * lift(t, p))))
+
+    # body: two-bump heave on the diagonal supports, roll onto the planted
+    # forelimb, slow shoulder yaw - all small, this is tonnes of dragon
+    pos("body", lambda t: (
+        0, SCALE * (-7.8 + 0.9 * math.sin(4 * math.pi * t / T + 0.7)), 0))
+    rot("body", lambda t: (1.2 * math.sin(4 * math.pi * t / T - 0.5),
+                           2.0 * math.sin(2 * math.pi * t / T - 0.94),
+                           2.4 * math.sin(2 * math.pi * t / T - 0.94)))
+
+    # neck: counter-sway against the shoulder yaw (fading toward the head)
+    # + a step-timed bob; the head stays nearly steady on the horizon
+    n = len(v.neck)
+    for i in range(1, n + 1):
+        f = i / n
+        rot(f"neck{i}",
+            lambda t, f=f: (
+                1.0 * (1 - f) * math.sin(4 * math.pi * t / T - 1.3),
+                -(1.6 / n) * math.sin(2 * math.pi * t / T - 0.94), 0))
+    rot("head", lambda t: (1.2 * math.sin(4 * math.pi * t / T - 1.9),
+                           -0.8 * math.sin(2 * math.pi * t / T - 0.94), 0))
+
+    if v.whiskers:
+        for side in ("l", "r"):
+            rot(f"whisker_{side}_1",
+                lambda t: (4 * math.sin(4 * math.pi * t / T - 2.3), 0, 0))
+            rot(f"whisker_{side}_2",
+                lambda t: (6 * math.sin(4 * math.pi * t / T - 2.9), 0, 0))
+
+    # tail: lateral counter-whip - one wave per cycle traveling down the
+    # chain, opposite the shoulder yaw, amplitude growing toward the tip
+    m = len(v.tail) if v.tail else 7
+    for i in range(1, m + 1):
+        f = i / m
+        a = (8.0 / m) * (0.45 + 1.3 * f)
+        rot(f"tail{i}",
+            lambda t, a=a, f=f: (
+                0, a * math.sin(2 * math.pi * t / T - 0.94 + math.pi - f * 2.2),
+                0))
+    rot("tail_fin",
+        lambda t: (0, 3.0 * math.sin(2 * math.pi * t / T - 0.94 + math.pi - 2.6),
+                   0))
+
+    return T, _bake(ch, T, keys=24)
+
+
+def fire_channels(v: Variant):
+    """Fire-breath attack loop on the planted stance: the dragon rears its
+    chest up off the wrists (plant re-solved so the knuckles stay on the
+    ground), coils the neck base back, and HOLDS a sustained blast - jaw
+    hinged wide, head raking slowly side to side to hose the cone across
+    the target line - elbows flared for balance, tail lashing, a low
+    tremor riding the neck. The loop IS the sustained breath: every frame
+    is a valid blasting pose, so the game can blend in and out anywhere."""
+    T = 3.2
+    ch: dict[str, dict[str, object]] = {}
+
+    def rot(b, f):
+        ch.setdefault(b, {})["rotation"] = f
+
+    def pos(b, f):
+        ch.setdefault(b, {})["position"] = f
+
+    st, _pz = _ground_stance(v)
+    for b, chans in st.items():
+        for cname, vec in chans.items():
+            ch.setdefault(b, {})[cname] = vec
+
+    def sweep(t):  # slow head rake: left -> right -> left, once per loop
+        return math.sin(2 * math.pi * t / T)
+
+    def trem(t, phase=0.0):  # the strain of the blast: 7 shivers per loop
+        return math.sin(2 * math.pi * 7 * t / T + phase)
+
+    # reared stance: chest lifts off the forelimbs as far as the forearm
+    # can still reach the ground, hind legs extend a little, forearm plant
+    # re-solved for the raised chest + mildly flared elbow
+    base = {"body": {"position": (0, -7.4 * SCALE, 0), "rotation": (2.5, 0, 0)},
+            "wing_l_arm": {"rotation": (0.0, -10.0, 33.0)}}
+    for side in ("l", "r"):
+        base[f"leg_{side}_thigh"] = {"rotation": (16, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (-15, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (-1, 0, 0)}
+    fz = _solve_plant(base)
+    pos("body", lambda t: (
+        0, SCALE * (-7.4 + 0.35 * math.sin(4 * math.pi * t / T)), 0))
+    rot("body", lambda t: (2.5 + 0.4 * trem(t), 0, 0))
+    for side, sx in (("l", 1), ("r", -1)):
+        rot(f"wing_{side}_arm",
+            lambda t, s=sx: (0, -10 * s, s * (33 + 1.5 * math.sin(
+                4 * math.pi * t / T + 0.8))))
+        rot(f"wing_{side}_fore", (0, 22 * sx, fz * sx))
+        rot(f"leg_{side}_thigh", (16, 0, 0))
+        rot(f"leg_{side}_shin", (-15, 0, 0))
+        rot(f"leg_{side}_foot", (-1, 0, 0))
+
+    # neck: the base coils up and back (front-loaded arc), the head end
+    # levels onto the target; the last segments carry a share of the rake
+    # so the sweep bends through the neck instead of snapping at the skull
+    n = len(v.neck)
+    ps = sum(s[0] for s in v.neck)
+    for i in range(1, n + 1):
+        f = (i - 1) / max(1, n - 1)
+        # +X arcs the neck up, strongest at the base; total arc is fixed
+        # across the chain (44 deg / n) so long necks rear the same height
+        arc = (44.0 / n) * (1 - 0.55 * f)
+        rake = 4.0 * max(0.0, f - 0.5) / 0.5   # rear half joins the sweep
+        rot(f"neck{i}",
+            lambda t, arc=arc, rake=rake, i=i: (
+                arc + 0.7 * trem(t, i * 0.9), rake * sweep(t), 0))
+    # head: strikes down off the raised neck (the blast hoses the ground
+    # ahead) and carries the main rake; jaw hinges WIDE with a surge pulse
+    rot("head", lambda t: (-0.55 * ps - 20 + 1.0 * trem(t, 1.7),
+                           10.0 * sweep(t), 0))
+    rot("jaw", lambda t: (-24 - 3.0 * (0.5 + 0.5 * math.sin(
+        4 * math.pi * t / T - 0.9)), 0, 0))
+
+    if v.whiskers:
+        for side in ("l", "r"):
+            rot(f"whisker_{side}_1", lambda t: (8 * trem(t, 2.2), 0, 0))
+            rot(f"whisker_{side}_2", lambda t: (11 * trem(t, 2.8), 0, 0))
+
+    # tail: an agitated lash - bigger than the idle sway, traveling wave
+    # with a small vertical ripple riding the effort
+    m = len(v.tail) if v.tail else 7
+    for i in range(1, m + 1):
+        f = i / m
+        a = (11.0 / m) * (0.4 + 1.4 * f)
+        rot(f"tail{i}",
+            lambda t, a=a, f=f: (
+                1.2 * f * math.sin(4 * math.pi * t / T - f * 2.0),
+                a * math.sin(2 * math.pi * t / T - f * 2.8), 0))
+    rot("tail_fin",
+        lambda t: (0, 4.5 * math.sin(2 * math.pi * t / T - 3.2), 0))
+
+    return T, _bake(ch, T, keys=48)
 
 
 # ------------------------------------------------------------------ UV packer
@@ -1172,10 +1401,11 @@ FACES = (  # vertex index quads over the (x,y,z) in {lo,hi} corner ordering
 
 
 def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
-           pose=None, ground=True):
+           pose=None, ground=True, overlay=None):
     """Orthographic painter's-algorithm render. `center` (world point) recenters
     and is used for close-ups; without it the model is framed for full body.
-    `pose` applies animation deltas; the image is returned (saved if `path`)."""
+    `pose` applies animation deltas; the image is returned (saved if `path`).
+    `overlay(img, to_screen)` draws on top after the cubes (fire breath)."""
     transforms = bone_world_transform(pose)
     bone_colors = {b.name: b.color for b in BONES}
     yaw, pitch = math.radians(view_yaw), math.radians(view_pitch)
@@ -1280,6 +1510,11 @@ def render(view_yaw, view_pitch, path, size=(1000, 780), scale=3.0, center=None,
         drw.line([(0, gy), (size[0], gy)], fill=(45, 48, 52), width=1)
     for _, proj, col in polys:
         drw.polygon(proj, fill=col, outline=tuple(int(ch * 0.75) for ch in col))
+    if overlay:
+        def to_screen(p):
+            vv = _rot_x(_rot_y(p, yaw), pitch)
+            return (anchor[0] + vv[0] * scale, anchor[1] - vv[1] * scale)
+        img = overlay(img, to_screen)
     if path:
         img.save(path)
     return img
@@ -1300,6 +1535,92 @@ def render_fly_previews(v: Variant, channels, length, tag, frames=16,
         sheet.paste(imgs[j * 2].resize((380, 300)),
                     (380 * (j % 4), 300 * (j // 4)))
     sheet.save(os.path.join(OUT_DIR, f"{v.name}_{tag}_sheet.png"))
+
+
+def _fire_overlay(v: Variant, pose, seed):
+    """Breath cone painter for one frame: additive flame dots streaming from
+    the posed mouth, core -> mid -> outer color over distance (the variant's
+    own fire), spread widening and drooping with reach, deterministic
+    flicker per frame. Returned as a render() overlay callback."""
+    fn = bone_world_transform(pose)["head"]
+    piv = {b.name: b for b in BONES}["head"].pivot
+    dm = (0.0, -0.8, -27.9)   # rest-space mouth gap, relative to head pivot
+    da = (0.0, -7.0, -46.0)   # aim point: down the muzzle, tilted below it
+    mouth = fn(tuple(p + d for p, d in zip(piv, dm)))
+    aim = fn(tuple(p + d for p, d in zip(piv, da)))
+    dirv = tuple(a - m for a, m in zip(aim, mouth))
+    dl = math.sqrt(sum(c * c for c in dirv)) or 1.0
+    dirv = tuple(c / dl for c in dirv)
+    up = (0.0, 1.0, 0.0)
+    side = (dirv[1] * up[2] - dirv[2] * up[1],
+            dirv[2] * up[0] - dirv[0] * up[2],
+            dirv[0] * up[1] - dirv[1] * up[0])
+    sl = math.sqrt(sum(c * c for c in side)) or 1.0
+    side = tuple(c / sl for c in side)
+    up2 = (side[1] * dirv[2] - side[2] * dirv[1],
+           side[2] * dirv[0] - side[0] * dirv[2],
+           side[0] * dirv[1] - side[1] * dirv[0])
+    rng = random.Random(f"{v.name}_fire_{seed}")
+    core, mid, outer = v.fire
+    REACH = 110.0
+
+    def lerp(c1, c2, f):
+        return tuple(int(a + (b - a) * f) for a, b in zip(c1, c2))
+
+    def overlay(img, to_screen):
+        lay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        drw = ImageDraw.Draw(lay)
+        dots = []
+        for _ in range(190):
+            q = rng.random() ** 0.85
+            d = q * REACH
+            spread = 1.0 + 9.5 * q ** 1.4
+            ra = rng.gauss(0, 0.55) * spread
+            rb = rng.gauss(0, 0.55) * spread
+            droop = (0.0, -14.0 * q * q, 0.0)  # gravity arc at the far end
+            wp = tuple(m + dirv[k] * d + side[k] * ra + up2[k] * rb + droop[k]
+                       for k, m in enumerate(mouth))
+            sz = (1.5 + 5.5 * q) * (0.75 + 0.5 * rng.random())
+            f = min(1.0, q + rng.gauss(0, 0.08))
+            col = (lerp(core, mid, f / 0.3) if f < 0.3
+                   else lerp(mid, outer, (f - 0.3) / 0.7))
+            al = 30 + int(205 * (1 - q) ** 0.75) + rng.randint(0, 18)
+            dots.append((q, wp, sz, col, min(255, al)))
+        dots.sort(key=lambda e: -e[0])  # far first, hot core overdraws
+        for q, wp, sz, col, al in dots:
+            x, y = to_screen(wp)
+            x2, y2 = to_screen(tuple(a + b * sz for a, b in zip(wp, side)))
+            r = max(1.5, math.hypot(x2 - x, y2 - y))
+            drw.ellipse([x - r, y - r, x + r, y + r], fill=col + (al,))
+        return Image.alpha_composite(img.convert("RGBA"), lay).convert("RGB")
+
+    return overlay
+
+
+def render_fire_previews(v: Variant, channels, length, frames=20):
+    """The fire loop with the painted breath: GIF + contact sheet + a side
+    still mid-rake showing the cone pattern in the variant's flame color."""
+    cam = (2.0 / SCALE) / (v.wing_scale * WING_BASE) ** 0.5
+    imgs = []
+    for k in range(frames):
+        t = k * length / frames
+        pose = pose_at(channels, t, length)
+        imgs.append(render(35, 16, None, size=(760, 600), scale=cam,
+                           ground=True, pose=pose,
+                           overlay=_fire_overlay(v, pose, k)))
+    imgs[0].save(os.path.join(OUT_DIR, f"{v.name}_fire.gif"), save_all=True,
+                 append_images=imgs[1:], duration=int(length * 1000 / frames),
+                 loop=0)
+    sheet = Image.new("RGB", (4 * 380, 2 * 300))
+    for j in range(8):
+        sheet.paste(imgs[j * 2 + (j // 4)].resize((380, 300)),
+                    (380 * (j % 4), 300 * (j // 4)))
+    sheet.save(os.path.join(OUT_DIR, f"{v.name}_fire_sheet.png"))
+    t = 0.25 * length
+    pose = pose_at(channels, t, length)
+    render(90, 8, os.path.join(OUT_DIR, f"{v.name}_fire_side.png"),
+           size=(1000, 660), scale=cam, ground=True, pose=pose,
+           overlay=_fire_overlay(v, pose, 99))
 
 
 # ------------------------------------------------------------------ exports
@@ -1534,9 +1855,13 @@ def build_variant(v: Variant):
     fly_len, fly = fly_channels(v)
     vert_len, vert = fly_vertical_channels(v)
     idle_len, idle = idle_channels(v)
+    walk_len, walk = walk_channels(v)
+    fire_len, fire = fire_channels(v)
     anims = [("animation.wyvern.fly", fly_len, fly),
              ("animation.wyvern.fly_vertical", vert_len, vert),
-             ("animation.wyvern.idle", idle_len, idle)]
+             ("animation.wyvern.idle", idle_len, idle),
+             ("animation.wyvern.walk", walk_len, walk),
+             ("animation.wyvern.fire", fire_len, fire)]
     export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"),
                    f"wyvern_{v.name}",
                    animations=[bb_animation(*a) for a in anims],
@@ -1555,9 +1880,11 @@ def build_variant(v: Variant):
     render_fly_previews(v, fly, fly_len, "fly")
     render_fly_previews(v, vert, vert_len, "flyvert")
     render_fly_previews(v, idle, idle_len, "idle", frames=28, ground=True)
+    render_fly_previews(v, walk, walk_len, "walk", frames=24, ground=True)
+    render_fire_previews(v, fire, fire_len)
     print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
-          f"fly={fly_len:.2f}s vert={vert_len:.2f}s head_at="
-          f"({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
+          f"fly={fly_len:.2f}s vert={vert_len:.2f}s walk={walk_len:.2f}s "
+          f"head_at=({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
 
 
 if __name__ == "__main__":
