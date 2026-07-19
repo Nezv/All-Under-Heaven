@@ -44,6 +44,14 @@ from dataclasses import dataclass, field
 from PIL import Image, ImageDraw, ImageStat
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
+# The mod's resource tree: run with --install (or INSTALL=1) to copy the
+# runtime artifacts (geo, animations, textures, sprites) into the mod so the
+# game ships exactly what this generator produced. GeckoLib 5 conventions:
+# geckolib/models/<path>.geo.json + geckolib/animations/<path>.animations.json
+# (note the PLURAL .animations.json - the 5.x loader strips that suffix).
+RES_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "src", "main", "resources", "assets", "allunderheaven"))
 TEX_W, TEX_H = 2048, 2048
 TEXEL = 2   # texture pixels per model unit (per-face UV, not box UV)
 UV_PAD = 2  # gutter between UV islands so painted detail can't bleed
@@ -552,14 +560,14 @@ def _bake(ch, T, keys=FLY_KEYS):
     return baked
 
 
-def fly_channels(v: Variant):
-    """Procedural straight-flight cycle, generalized by the variant's build:
-    period and flap depth follow wing_scale (a bigger wing beats slower and
-    shallower), the neck counter-sway and tail wave distribute over however
-    many segments the variant actually has, whiskers trail only if present.
+def _fly_core(v: Variant):
+    """The straight-flight cycle, UNBAKED (bone -> channel -> callable), so
+    derived airborne clips (fly_fire) can override individual channels before
+    baking. Generalized by the variant's build: period and flap depth follow
+    wing_scale (a bigger wing beats slower and shallower), the neck
+    counter-sway and tail wave distribute over however many segments the
+    variant actually has, whiskers trail only if present.
 
-    Returns (period_seconds, {bone: {channel: [(t, (x, y, z)), ...]}}) in
-    Blockbench space (left side authored, right side sign-mirrored on y/z).
     Rotation keys are DELTAS on top of the rest pose, per bbmodel/GeckoLib
     semantics (keyframe 0 = bind pose)."""
     T = FLY_LEN * v.wing_scale ** 0.25
@@ -621,6 +629,86 @@ def fly_channels(v: Variant):
         ph = 0.7 + (i / m) * 2.3 * math.pi
         rot(f"tail{i}", lambda t, a=a, ph=ph: (a * math.sin(W * t - ph), 0, 0))
     rot("tail_fin", lambda t: (1.8 * math.sin(W * t - 1.2 - 2.3 * math.pi), 0, 0))
+
+    _tuck_legs(rot)
+    return T, ch
+
+
+def fly_channels(v: Variant):
+    """Level cruise: the baked _fly_core."""
+    T, ch = _fly_core(v)
+    return T, _bake(ch, T)
+
+
+def fly_fire_channels(v: Variant):
+    """The aerial hose: the cruise flap continues, but the neck arcs down,
+    the head strikes toward the ground ahead and the jaw hinges wide - the
+    strafing-run breath. Derived from _fly_core so the wings/body/tail stay
+    in perfect sync with the plain fly clip (the controller can cut between
+    them mid-beat without a hitch)."""
+    T, ch = _fly_core(v)
+    W = 2 * math.pi / T
+
+    def rot(b, f):
+        ch[b] = dict(ch.get(b, {}));  ch[b]["rotation"] = f
+
+    n = len(v.neck)
+    ps = sum(s[0] for s in v.neck)
+    for i, seg in enumerate(v.neck, 1):
+        r, f = seg[0], (i - 1) / max(1, n - 1)
+        # cruise flatten stays, plus a downward arc growing toward the head
+        rot(f"neck{i}",
+            lambda t, r=r, f=f: (-0.8 * r - (16.0 / n) * (0.4 + 0.6 * f), 0, 0))
+    rot("head", lambda t: (0.8 * ps - 24 + 1.5 * math.sin(2 * W * t), 0, 0))
+    rot("jaw", lambda t: (-23 - 3.0 * (0.5 + 0.5 * math.sin(2 * W * t - 0.8)),
+                          0, 0))
+    return T, _bake(ch, T)
+
+
+def glide_channels(v: Variant):
+    """The soar: wings locked out flat with a light dihedral, slow breathing
+    sway the only motion - the descent/approach posture between flap cycles.
+    Neck carries the cruise flatten, legs stay tucked, tail streams."""
+    T = 3.6
+    W = 2 * math.pi / T
+    ch: dict[str, dict[str, object]] = {}
+
+    def rot(b, f):
+        ch.setdefault(b, {})["rotation"] = f
+
+    def pos(b, f):
+        ch.setdefault(b, {})["position"] = f
+
+    for side, sx in (("l", 1), ("r", -1)):
+        rot(f"wing_{side}_arm",
+            lambda t, s=sx: (0, 0, s * (2.5 + 1.6 * math.sin(W * t))))
+        rot(f"wing_{side}_fore",
+            lambda t, s=sx: (0, 0, s * (-1.5 + 0.9 * math.sin(W * t - 0.7))))
+        rot(f"wing_{side}_hand",
+            lambda t, s=sx: (0, 0, s * (-1.0 + 0.6 * math.sin(W * t - 1.2))))
+        for fi in range(1, len(v.fingers) + 1):
+            rot(f"wing_{side}_finger{fi}b", (0, -2.5 * sx, 0))
+
+    pos("body", lambda t: (0, -0.6 * SCALE * math.sin(W * t - 0.4), 0))
+    rot("body", (1.5, 0, 0))  # nose gently down into the glide path
+
+    n = len(v.neck)
+    ps = sum(s[0] for s in v.neck)
+    for i, seg in enumerate(v.neck, 1):
+        rot(f"neck{i}", (-0.8 * seg[0], 0, 0))
+    rot("head", lambda t: (0.8 * ps + 1.2 * math.sin(W * t - 1.5), 0, 0))
+
+    if v.whiskers:
+        for side in ("l", "r"):
+            rot(f"whisker_{side}_1", lambda t: (6 * math.sin(W * t - 1.8), 0, 0))
+            rot(f"whisker_{side}_2", lambda t: (9 * math.sin(W * t - 2.4), 0, 0))
+
+    m = len(v.tail) if v.tail else 7
+    for i in range(1, m + 1):
+        a = 0.3 + 1.0 * (i / m) ** 1.5
+        rot(f"tail{i}",
+            lambda t, a=a, i=i: (a * math.sin(W * t - 0.8 - (i / m) * 1.8), 0, 0))
+    rot("tail_fin", lambda t: (1.6 * math.sin(W * t - 2.8), 0, 0))
 
     _tuck_legs(rot)
     return T, _bake(ch, T)
@@ -1843,6 +1931,77 @@ def export_geo(path, identifier):
         json.dump(doc, f, indent=1)
 
 
+# ----------------------------------------------------------- asset install
+
+def _paint_flame_sprite(path):
+    """16x16 grayscale teardrop flame for the dragon_flame particle. Ships
+    near-WHITE: the particle tints it with the variant's fire color at
+    runtime (rCol/gCol/bCol), so any pigment here would mud the tint.
+    Alpha is binary (cutout) to match the flame particle render layer."""
+    img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    blobs = ((8.0, 11.0, 5.0, 1.0), (8.0, 7.5, 3.6, 0.95),
+             (8.0, 4.2, 2.2, 0.85), (8.0, 2.0, 1.1, 0.72))
+    rng = random.Random("dragon_flame")
+    for y in range(16):
+        for x in range(16):
+            v = 0.0
+            for cx, cy, r, w in blobs:
+                d2 = ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2) / (r * r)
+                v = max(v, w * math.exp(-1.6 * d2))
+            v += (rng.random() - 0.5) * 0.06
+            if v > 0.24:
+                g = min(255, int(120 + 150 * min(1.0, v)))
+                img.putpixel((x, y), (g, g, g, 255))
+    img.save(path)
+
+
+def _paint_egg_sprite(path):
+    """16x16 dragon spawn egg item icon: brick-red egg, dark speckles."""
+    img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    base, dark, spot = (146, 46, 38), (84, 28, 24), (34, 32, 40)
+    rows = {2: (6, 9), 3: (5, 10), 4: (4, 11), 5: (4, 11), 6: (3, 12),
+            7: (3, 12), 8: (3, 12), 9: (3, 12), 10: (3, 12), 11: (4, 11),
+            12: (4, 11), 13: (5, 10)}
+    rng = random.Random("dragon_egg")
+    for y, (x0, x1) in rows.items():
+        for x in range(x0, x1 + 1):
+            c = base
+            if x in (x0, x1) or y in (2, 13):
+                c = dark
+            elif rng.random() < 0.2:
+                c = spot
+            elif x <= x0 + 2 and y <= 6:
+                c = tuple(min(255, int(k * 1.25)) for k in base)  # highlight
+            img.putpixel((x, y), c + (255,))
+    img.save(path)
+
+
+def install_assets(v: Variant):
+    """Copies one variant's runtime artifacts into the mod resource tree
+    (GeckoLib 5 paths; note the plural .animations.json suffix)."""
+    import shutil
+    geo_dst = os.path.join(RES_DIR, "geckolib", "models", "entity")
+    anim_dst = os.path.join(RES_DIR, "geckolib", "animations", "entity")
+    tex_dst = os.path.join(RES_DIR, "textures", "entity")
+    for d in (geo_dst, anim_dst, tex_dst):
+        os.makedirs(d, exist_ok=True)
+    shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.geo.json"),
+                    os.path.join(geo_dst, f"wyvern_{v.name}.geo.json"))
+    shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.animation.json"),
+                    os.path.join(anim_dst, f"wyvern_{v.name}.animations.json"))
+    shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.png"),
+                    os.path.join(tex_dst, f"wyvern_{v.name}.png"))
+
+
+def install_shared_assets():
+    part_dir = os.path.join(RES_DIR, "textures", "particle")
+    item_dir = os.path.join(RES_DIR, "textures", "item")
+    os.makedirs(part_dir, exist_ok=True)
+    os.makedirs(item_dir, exist_ok=True)
+    _paint_flame_sprite(os.path.join(part_dir, "dragon_flame.png"))
+    _paint_egg_sprite(os.path.join(item_dir, "dragon_spawn_egg.png"))
+
+
 # ---------------------------------------------------------------------- main
 
 def build_variant(v: Variant):
@@ -1857,11 +2016,15 @@ def build_variant(v: Variant):
     idle_len, idle = idle_channels(v)
     walk_len, walk = walk_channels(v)
     fire_len, fire = fire_channels(v)
+    glide_len, glide = glide_channels(v)
+    flyfire_len, flyfire = fly_fire_channels(v)
     anims = [("animation.wyvern.fly", fly_len, fly),
              ("animation.wyvern.fly_vertical", vert_len, vert),
              ("animation.wyvern.idle", idle_len, idle),
              ("animation.wyvern.walk", walk_len, walk),
-             ("animation.wyvern.fire", fire_len, fire)]
+             ("animation.wyvern.fire", fire_len, fire),
+             ("animation.wyvern.glide", glide_len, glide),
+             ("animation.wyvern.fly_fire", flyfire_len, flyfire)]
     export_bbmodel(os.path.join(OUT_DIR, f"wyvern_{v.name}.bbmodel"),
                    f"wyvern_{v.name}",
                    animations=[bb_animation(*a) for a in anims],
@@ -1882,6 +2045,9 @@ def build_variant(v: Variant):
     render_fly_previews(v, idle, idle_len, "idle", frames=28, ground=True)
     render_fly_previews(v, walk, walk_len, "walk", frames=24, ground=True)
     render_fire_previews(v, fire, fire_len)
+    render_fly_previews(v, glide, glide_len, "glide")
+    render_fly_previews(v, flyfire, flyfire_len, "flyfire")
+    install_assets(v)
     print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
           f"fly={fly_len:.2f}s vert={vert_len:.2f}s walk={walk_len:.2f}s "
           f"head_at=({head[0]:.0f},{head[1]:.0f},{head[2]:.0f})")
@@ -1891,4 +2057,5 @@ if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     for variant in (RED, BLACK, WHITE):
         build_variant(variant)
-    print("wrote", OUT_DIR)
+    install_shared_assets()
+    print("wrote", OUT_DIR, "and installed assets into", RES_DIR)

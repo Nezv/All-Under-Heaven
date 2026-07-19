@@ -24,6 +24,7 @@ public final class ModCreativeTabs {
                     .displayItems((parameters, output) -> {
                         output.accept(ModItems.JADE_SEAL.get());
                         output.accept(ModItems.JADE_BLOCK_ITEM.get());
+                        output.accept(ModItems.DRAGON_SPAWN_EGG.get());
                     })
                     .build());
 

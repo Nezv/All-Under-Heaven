@@ -3,6 +3,8 @@
 
   "item.allunderheaven.jade_seal": "Jade Seal",
   "block.allunderheaven.jade_block": "Jade Block",
+  "item.allunderheaven.dragon_spawn_egg": "Dragon Spawn Egg",
+  "entity.allunderheaven.dragon": "Dragon",
 
   "message.allunderheaven.village_entered": "Now entering %s",
   "message.allunderheaven.village_discovered": "Discovered %s — centered near %s, %s",

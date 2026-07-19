@@ -1,0 +1,7 @@
+{
+  "type": "allunderheaven:dragon_nest",
+  "biomes": "#allunderheaven:has_structure/dragon_nest",
+  "step": "surface_structures",
+  "spawn_overrides": {},
+  "terrain_adaptation": "none"
+}

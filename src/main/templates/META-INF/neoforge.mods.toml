@@ -82,6 +82,14 @@ All Under Heaven — a content mod bringing new features to the realm.
     ordering="NONE"
     side="BOTH"
 
+# GeckoLib drives the dragon entity models/animations.
+[[dependencies.${mod_id}]]
+    modId="geckolib"
+    type="required"
+    versionRange="[5.5,)"
+    ordering="AFTER"
+    side="BOTH"
+
 # Xaero's map mods are recommended companions: village discovery messages
 # include waypoint-share lines that their clients turn into map markers.
 [[dependencies.${mod_id}]]

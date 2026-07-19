@@ -123,6 +123,10 @@ configurations {
 }
 
 dependencies {
+    // GeckoLib animates the dragon entities (geo model + bedrock animation
+    // jsons exported by tools/dragon/build_dragon.py). Hard dependency.
+    implementation "maven.modrinth:geckolib:${geckolib_version}"
+
     // Xaero's World Map + Minimap in dev runs (localRuntime = not published as a
     // dependency of this mod). The minimap renders waypoints — including the
     // village waypoints this mod shares — on both the minimap and the world map.

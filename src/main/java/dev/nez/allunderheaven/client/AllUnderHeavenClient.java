@@ -1,12 +1,18 @@
 package dev.nez.allunderheaven.client;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.client.dragon.DragonFlameParticle;
+import dev.nez.allunderheaven.client.dragon.DragonRenderer;
+import dev.nez.allunderheaven.registry.ModEntities;
+import dev.nez.allunderheaven.registry.ModParticles;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 
@@ -25,5 +31,15 @@ public class AllUnderHeavenClient {
     @SubscribeEvent
     static void onClientSetup(FMLClientSetupEvent event) {
         AllUnderHeaven.LOGGER.info("[All Under Heaven] client setup complete");
+    }
+
+    @SubscribeEvent
+    static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        event.registerEntityRenderer(ModEntities.DRAGON.get(), DragonRenderer::new);
+    }
+
+    @SubscribeEvent
+    static void onRegisterParticles(RegisterParticleProvidersEvent event) {
+        event.registerSpriteSet(ModParticles.DRAGON_FLAME.get(), DragonFlameParticle.Provider::new);
     }
 }

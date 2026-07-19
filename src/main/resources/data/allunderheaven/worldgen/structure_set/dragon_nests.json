@@ -1,0 +1,14 @@
+{
+  "structures": [
+    {
+      "structure": "allunderheaven:dragon_nest",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 63,
+    "separation": 24,
+    "salt": 240719137
+  }
+}
