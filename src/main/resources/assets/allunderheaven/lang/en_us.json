@@ -5,6 +5,12 @@
   "block.allunderheaven.jade_block": "Jade Block",
   "item.allunderheaven.dragon_spawn_egg": "Dragon Spawn Egg",
   "entity.allunderheaven.dragon": "Dragon",
+  "subtitles.allunderheaven.entity.dragon.growl": "Dragon growls",
+  "subtitles.allunderheaven.entity.dragon.roar": "Dragon roars",
+  "subtitles.allunderheaven.entity.dragon.death": "Dragon dies",
+  "subtitles.allunderheaven.entity.dragon.flap": "Dragon beats its wings",
+  "subtitles.allunderheaven.entity.dragon.fire": "Dragon breathes fire",
+  "subtitles.allunderheaven.entity.dragon.step": "Dragon stomps",
 
   "message.allunderheaven.village_entered": "Now entering %s",
   "message.allunderheaven.village_discovered": "Discovered %s — centered near %s, %s",

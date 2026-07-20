@@ -1,0 +1,39 @@
+{
+  "entity.dragon.growl": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.growl",
+    "sounds": [
+      "allunderheaven:entity/dragon/growl1",
+      "allunderheaven:entity/dragon/growl2"
+    ]
+  },
+  "entity.dragon.roar": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.roar",
+    "sounds": [
+      "allunderheaven:entity/dragon/roar"
+    ]
+  },
+  "entity.dragon.death": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.death",
+    "sounds": [
+      "allunderheaven:entity/dragon/death"
+    ]
+  },
+  "entity.dragon.flap": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.flap",
+    "sounds": [
+      "allunderheaven:entity/dragon/flap"
+    ]
+  },
+  "entity.dragon.fire": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.fire",
+    "sounds": [
+      "allunderheaven:entity/dragon/fire"
+    ]
+  },
+  "entity.dragon.step": {
+    "subtitle": "subtitles.allunderheaven.entity.dragon.step",
+    "sounds": [
+      "allunderheaven:entity/dragon/step"
+    ]
+  }
+}

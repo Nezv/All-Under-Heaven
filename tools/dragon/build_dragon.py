@@ -833,12 +833,49 @@ def _solve_plant(pose_base, fore_yaw=22.0, target_y=4.5):
     return (lo + hi) / 2
 
 
+def _solve_head_low(v: Variant, pose_base, target_y=16.0):
+    """Finds the per-segment neck drop (degrees) that puts the HEAD CENTER
+    at target_y scaled units above the ground (16 = one block) in the given
+    stance: every neck segment pitches down by the answer while the head
+    counters 80% of the total, so the muzzle stays level - the prowling,
+    ground-skimming look Bruno wants on land. Bisected per variant like
+    _solve_plant (a 7-segment neck needs a shallower drop per joint)."""
+    head = {b.name: b for b in BONES}["head"]
+    n = len(v.neck)
+    # mid-skull center, rest space: forward-down of the head pivot
+    # (authored head-local (0, 1.5, -5.5) x hs 1.18, scaled at emit)
+    hc = (head.pivot[0], head.pivot[1] + 1.5 * 1.18 * SCALE,
+          head.pivot[2] - 5.5 * 1.18 * SCALE)
+
+    def head_y(k):
+        pose = dict(pose_base)
+        for i in range(1, n + 1):
+            pose[f"neck{i}"] = {"rotation": (-k, 0.0, 0.0)}
+        pose["head"] = {"rotation": (0.8 * k * n, 0.0, 0.0)}
+        return bone_world_transform(pose)["head"](hc)[1]
+
+    lo, hi = 0.0, 30.0
+    if head_y(hi) > target_y:
+        return hi  # neck too short to reach lower - drop as far as it goes
+    if head_y(lo) < target_y:
+        return lo
+    for _ in range(28):
+        mid = (lo + hi) / 2
+        if head_y(mid) > target_y:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
 def _ground_stance(v: Variant):
     """The planted beach stance shared by every ground animation: body
     crouched between the wing-forelimbs, hind legs folded, forearms dropped
     to the per-variant solved knuckle plant, fingers fanned back as folded
-    ribs. Returns (static_channels, plant_z); animations layer motion by
-    overwriting any entry with a time function."""
+    ribs, and the neck lowered until the head center rides one block off
+    the ground (muzzle level). Returns (static_channels, plant_z, drop);
+    animations layer motion by overwriting entries with time functions
+    (neck overrides should re-add the drop unless they aim themselves)."""
     base = {"body": {"position": (0, -9.0 * SCALE, 0)},
             "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
     for side in ("l", "r"):
@@ -866,7 +903,12 @@ def _ground_stance(v: Variant):
         st[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
         st[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
         st[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
-    return st, plant_z
+    drop = _solve_head_low(v, st)
+    n = len(v.neck)
+    for i in range(1, n + 1):
+        st[f"neck{i}"] = {"rotation": (-drop, 0.0, 0.0)}
+    st["head"] = {"rotation": (0.8 * drop * n, 0.0, 0.0)}
+    return st, plant_z, drop
 
 
 def idle_channels(v: Variant):
@@ -889,9 +931,9 @@ def idle_channels(v: Variant):
         return math.sin(2 * math.pi * 2 * t / T + phase)
 
     # --- planted wings: the beach stance uses the wings as FRONT LEGS
-    # (shared _ground_stance: solved knuckle plant + finger fan + crouch);
-    # slow breathing rides the planted humerus on top
-    st, _plant = _ground_stance(v)
+    # (shared _ground_stance: solved knuckle plant + finger fan + crouch +
+    # head-low neck); slow breathing rides the planted humerus on top
+    st, _plant, drop = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
@@ -916,15 +958,18 @@ def idle_channels(v: Variant):
     # gaze turns near the HEAD end (tip-heavy weights - the base barely
     # moves, the last segments and head carry the 120 degrees); the shake
     # is a pure Z TWIST about the neck's own axis (the dog shake), rolling
-    # root-to-head with growing amplitude - no yaw component at all
+    # root-to-head with growing amplitude - no yaw component at all. The
+    # solved head-low drop stays underneath both layers: the dragon scans
+    # and shakes with its head skimming a block off the ground.
     n = len(v.neck)
     wsum = sum((i / n) ** 2.5 for i in range(1, n + 1))
     for i in range(1, n + 1):
         wgt = (i / n) ** 2.5 / wsum * 25.0
         rot(f"neck{i}",
-            lambda t, w=wgt, i=i: (0, w * gaze(t),
+            lambda t, w=wgt, i=i: (-drop, w * gaze(t),
                                    (2.0 + 6.0 * i / n) * shake(t, i * 0.7)))
-    rot("head", lambda t: (0, 35.0 * gaze(t), 15.0 * shake(t, (n + 1) * 0.7)))
+    rot("head", lambda t: (0.8 * drop * n, 35.0 * gaze(t),
+                           15.0 * shake(t, (n + 1) * 0.7)))
     rot("jaw", lambda t: (-1.6 * (0.5 - 0.5 * math.cos(2 * math.pi * 2 * t / T)),
                           0, 0))
 
@@ -964,7 +1009,7 @@ def walk_channels(v: Variant):
     def pos(b, f):
         ch.setdefault(b, {})["position"] = f
 
-    st, _pz = _ground_stance(v)
+    st, _pz, drop = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
@@ -1030,15 +1075,17 @@ def walk_channels(v: Variant):
                            2.4 * math.sin(2 * math.pi * t / T - 0.94)))
 
     # neck: counter-sway against the shoulder yaw (fading toward the head)
-    # + a step-timed bob; the head stays nearly steady on the horizon
+    # + a step-timed bob, all riding the solved head-low drop - the stalk:
+    # head skimming a block off the ground, steady on the horizon
     n = len(v.neck)
     for i in range(1, n + 1):
         f = i / n
         rot(f"neck{i}",
             lambda t, f=f: (
-                1.0 * (1 - f) * math.sin(4 * math.pi * t / T - 1.3),
+                -drop + 1.0 * (1 - f) * math.sin(4 * math.pi * t / T - 1.3),
                 -(1.6 / n) * math.sin(2 * math.pi * t / T - 0.94), 0))
-    rot("head", lambda t: (1.2 * math.sin(4 * math.pi * t / T - 1.9),
+    rot("head", lambda t: (0.8 * drop * n
+                           + 1.2 * math.sin(4 * math.pi * t / T - 1.9),
                            -0.8 * math.sin(2 * math.pi * t / T - 0.94), 0))
 
     if v.whiskers:
@@ -1082,7 +1129,9 @@ def fire_channels(v: Variant):
     def pos(b, f):
         ch.setdefault(b, {})["position"] = f
 
-    st, _pz = _ground_stance(v)
+    # stance minus the head-low layer: fire OVERRIDES every neck segment
+    # and the head below (the strike aims itself)
+    st, _pz, _drop = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
@@ -1877,7 +1926,12 @@ def export_animation_json(path, anims):
 
 
 def export_geo(path, identifier):
-    """Bedrock geometry for GeckoLib. Bedrock mirrors X vs Blockbench space."""
+    """Bedrock geometry for GeckoLib. Positions mirror X (pivot [-x, y, z]);
+    rotations follow the SAME sign law as animation keyframes - (-x, -y, +z)
+    of generator space, exactly _anim_convert. (The old [x, -y, -z]
+    "mathematical mirror" guess rendered every pitched bone inverted
+    in-game - Bruno's bent-down necks - because bedrock rotations are their
+    own convention, not a pure reflection.)"""
     bones_json = []
     cubes_by_bone: dict[str, list[Cube]] = {}
     for c in CUBES:
@@ -1890,7 +1944,7 @@ def export_geo(path, identifier):
         if b.parent:
             entry["parent"] = b.parent
         if any(abs(a) > 1e-6 for a in b.rot):
-            entry["rotation"] = [b.rot[0], -b.rot[1], -b.rot[2]]
+            entry["rotation"] = [-b.rot[0], -b.rot[1], b.rot[2]]
         cl = []
         for c in cubes_by_bone.get(b.name, []):
             w = c.hi[0] - c.lo[0]
@@ -1905,7 +1959,7 @@ def export_geo(path, identifier):
                 "size": [w, c.hi[1] - c.lo[1], c.hi[2] - c.lo[2]],
                 "uv": uv,
                 **({"pivot": [-c.origin[0], c.origin[1], c.origin[2]],
-                    "rotation": [c.rot[0], -c.rot[1], -c.rot[2]]}
+                    "rotation": [-c.rot[0], -c.rot[1], c.rot[2]]}
                    if any(c.rot) else {}),
                 **({"inflate": c.inflate} if c.inflate else {}),
                 **({"mirror": True} if c.mirror else {}),

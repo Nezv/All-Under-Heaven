@@ -10,6 +10,7 @@ import com.geckolib.animation.RawAnimation;
 import com.geckolib.util.GeckoLibUtil;
 
 import dev.nez.allunderheaven.registry.ModParticles;
+import dev.nez.allunderheaven.registry.ModSounds;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ColorParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
@@ -18,7 +19,6 @@ import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvent;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
 import net.minecraft.util.TimeUtil;
 import net.minecraft.util.valueproviders.UniformInt;
@@ -46,6 +46,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.ValueInput;
@@ -137,6 +138,9 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
     }
 
     private void setBreathingFire(boolean breathing) {
+        if (breathing && !this.isBreathingFire()) {
+            this.playSound(ModSounds.DRAGON_FIRE.get(), 2.4F, 1.0F);
+        }
         this.entityData.set(DATA_BREATHING, breathing);
     }
 
@@ -226,8 +230,11 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
             if (this.isFlying()) {
                 this.fallDistance = 0.0F;
                 if (this.tickCount % 42 == 0) {
-                    this.playSound(SoundEvents.ENDER_DRAGON_FLAP, 1.4F, 0.95F + this.random.nextFloat() * 0.1F);
+                    this.playSound(ModSounds.DRAGON_FLAP.get(), 1.6F, 0.95F + this.random.nextFloat() * 0.1F);
                 }
+            }
+            if (this.isBreathingFire() && this.tickCount % 45 == 0) {
+                this.playSound(ModSounds.DRAGON_FIRE.get(), 2.4F, 1.0F); // re-arm the loop
             }
         }
     }
@@ -268,22 +275,27 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
 
     @Override
     protected SoundEvent getAmbientSound() {
-        return SoundEvents.ENDER_DRAGON_GROWL;
+        return ModSounds.DRAGON_GROWL.get();
+    }
+
+    @Override
+    public int getAmbientSoundInterval() {
+        return 240; // it rumbles when it wants to, not on a parrot schedule
     }
 
     @Override
     protected SoundEvent getHurtSound(DamageSource source) {
-        return SoundEvents.ENDER_DRAGON_HURT;
+        return ModSounds.DRAGON_ROAR.get();
     }
 
     @Override
     protected SoundEvent getDeathSound() {
-        return SoundEvents.ENDER_DRAGON_DEATH;
+        return ModSounds.DRAGON_DEATH.get();
     }
 
     @Override
-    public float getVoicePitch() {
-        return 1.15F; // big, but no Ender Dragon
+    protected void playStepSound(BlockPos pos, BlockState blockState) {
+        this.playSound(ModSounds.DRAGON_STEP.get(), 0.6F, 0.9F + this.random.nextFloat() * 0.2F);
     }
 
     // ------------------------------------------------------------ GeckoLib
@@ -508,7 +520,7 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
             DragonEntity.this.setFlying(true);
             DragonEntity.this.getNavigation().stop();
             DragonEntity.this.setDeltaMovement(DragonEntity.this.getDeltaMovement().add(0.0, 0.55, 0.0));
-            DragonEntity.this.playSound(SoundEvents.ENDER_DRAGON_FLAP, 2.0F, 0.9F);
+            DragonEntity.this.playSound(ModSounds.DRAGON_FLAP.get(), 2.2F, 0.9F);
         }
 
         @Override
@@ -556,7 +568,7 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
                 if (this.strafeCooldown <= 0 && dist < 26.0 && dragon.hasLineOfSight(target)) {
                     this.phase = 2;
                     this.strafeTicks = 55;
-                    dragon.playSound(SoundEvents.ENDER_DRAGON_SHOOT, 2.0F, 0.9F);
+                    dragon.playSound(ModSounds.DRAGON_ROAR.get(), 2.4F, 1.0F);
                     return;
                 }
                 // pursuit: lead the target, hold a hunting altitude above it
@@ -704,7 +716,7 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
             this.aimTicks = 12;
             this.breathTicks = 64;
             DragonEntity.this.getNavigation().stop();
-            DragonEntity.this.playSound(SoundEvents.ENDER_DRAGON_SHOOT, 2.0F, 0.9F);
+            DragonEntity.this.playSound(ModSounds.DRAGON_ROAR.get(), 2.4F, 1.0F);
         }
 
         @Override
