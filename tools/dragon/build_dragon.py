@@ -833,39 +833,54 @@ def _solve_plant(pose_base, fore_yaw=22.0, target_y=4.5):
     return (lo + hi) / 2
 
 
-def _solve_head_low(v: Variant, pose_base, target_y=16.0):
-    """Finds the per-segment neck drop (degrees) that puts the HEAD CENTER
-    at target_y scaled units above the ground (16 = one block) in the given
-    stance: every neck segment pitches down by the answer while the head
-    counters 80% of the total, so the muzzle stays level - the prowling,
-    ground-skimming look Bruno wants on land. Bisected per variant like
-    _solve_plant (a 7-segment neck needs a shallower drop per joint)."""
+def _solve_head_low(v: Variant, pose_base, target_y=18.0):
+    """The crawling ground neck: every segment cancels its OWN rest pitch
+    (the sitting S levels into a straight lance, exactly like the flight
+    flatten), then the whole straight lance tilts down from the BASE joint
+    alone by a solved angle, with the head re-leveled on top. The result is
+    Bruno's green line - a straight neck streaming forward just above the
+    ground - instead of the arching dive a uniform per-segment drop gives
+    (rises off the shoulder, then plunges muzzle-first into the dirt).
+
+    The base tilt is bisected until the HEAD CENTER sits at target_y scaled
+    units (18 = 1.13 blocks: the jaw and chin barbels hang ~5.5 units below
+    the center, so the chin clears flat ground with margin and the head
+    never starts inside a block). Returns (neck_x list, head_x)."""
     head = {b.name: b for b in BONES}["head"]
-    n = len(v.neck)
+    rests = [s[0] for s in v.neck]
+    ps = sum(rests)
     # mid-skull center, rest space: forward-down of the head pivot
     # (authored head-local (0, 1.5, -5.5) x hs 1.18, scaled at emit)
     hc = (head.pivot[0], head.pivot[1] + 1.5 * 1.18 * SCALE,
           head.pivot[2] - 5.5 * 1.18 * SCALE)
 
+    def build(k):
+        xs = [-r for r in rests]  # straighten the S
+        xs[0] -= k                # tilt the whole lance from the base
+        # head re-levels: rest compensation + most of the tilt back (the
+        # slight remainder keeps a predatory nose-down cast)
+        return xs, ps + 0.85 * k
+
     def head_y(k):
+        xs, hx = build(k)
         pose = dict(pose_base)
-        for i in range(1, n + 1):
-            pose[f"neck{i}"] = {"rotation": (-k, 0.0, 0.0)}
-        pose["head"] = {"rotation": (0.8 * k * n, 0.0, 0.0)}
+        for i, x in enumerate(xs, 1):
+            pose[f"neck{i}"] = {"rotation": (x, 0.0, 0.0)}
+        pose["head"] = {"rotation": (hx, 0.0, 0.0)}
         return bone_world_transform(pose)["head"](hc)[1]
 
-    lo, hi = 0.0, 30.0
+    lo, hi = 0.0, 55.0
     if head_y(hi) > target_y:
-        return hi  # neck too short to reach lower - drop as far as it goes
+        return build(hi)  # neck too short to reach lower - full tilt
     if head_y(lo) < target_y:
-        return lo
+        return build(lo)
     for _ in range(28):
         mid = (lo + hi) / 2
         if head_y(mid) > target_y:
             lo = mid
         else:
             hi = mid
-    return (lo + hi) / 2
+    return build((lo + hi) / 2)
 
 
 def _ground_stance(v: Variant):
@@ -903,12 +918,11 @@ def _ground_stance(v: Variant):
         st[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
         st[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
         st[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
-    drop = _solve_head_low(v, st)
-    n = len(v.neck)
-    for i in range(1, n + 1):
-        st[f"neck{i}"] = {"rotation": (-drop, 0.0, 0.0)}
-    st["head"] = {"rotation": (0.8 * drop * n, 0.0, 0.0)}
-    return st, plant_z, drop
+    neck_x, head_x = _solve_head_low(v, st)
+    for i, x in enumerate(neck_x, 1):
+        st[f"neck{i}"] = {"rotation": (x, 0.0, 0.0)}
+    st["head"] = {"rotation": (head_x, 0.0, 0.0)}
+    return st, plant_z, neck_x, head_x
 
 
 def idle_channels(v: Variant):
@@ -933,7 +947,7 @@ def idle_channels(v: Variant):
     # --- planted wings: the beach stance uses the wings as FRONT LEGS
     # (shared _ground_stance: solved knuckle plant + finger fan + crouch +
     # head-low neck); slow breathing rides the planted humerus on top
-    st, _plant, drop = _ground_stance(v)
+    st, _plant, neck_x, head_x = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
@@ -966,9 +980,9 @@ def idle_channels(v: Variant):
     for i in range(1, n + 1):
         wgt = (i / n) ** 2.5 / wsum * 25.0
         rot(f"neck{i}",
-            lambda t, w=wgt, i=i: (-drop, w * gaze(t),
+            lambda t, w=wgt, i=i: (neck_x[i - 1], w * gaze(t),
                                    (2.0 + 6.0 * i / n) * shake(t, i * 0.7)))
-    rot("head", lambda t: (0.8 * drop * n, 35.0 * gaze(t),
+    rot("head", lambda t: (head_x, 35.0 * gaze(t),
                            15.0 * shake(t, (n + 1) * 0.7)))
     rot("jaw", lambda t: (-1.6 * (0.5 - 0.5 * math.cos(2 * math.pi * 2 * t / T)),
                           0, 0))
@@ -1009,7 +1023,7 @@ def walk_channels(v: Variant):
     def pos(b, f):
         ch.setdefault(b, {})["position"] = f
 
-    st, _pz, drop = _ground_stance(v)
+    st, _pz, neck_x, head_x = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
@@ -1081,10 +1095,10 @@ def walk_channels(v: Variant):
     for i in range(1, n + 1):
         f = i / n
         rot(f"neck{i}",
-            lambda t, f=f: (
-                -drop + 1.0 * (1 - f) * math.sin(4 * math.pi * t / T - 1.3),
+            lambda t, f=f, i=i: (
+                neck_x[i - 1] + 1.0 * (1 - f) * math.sin(4 * math.pi * t / T - 1.3),
                 -(1.6 / n) * math.sin(2 * math.pi * t / T - 0.94), 0))
-    rot("head", lambda t: (0.8 * drop * n
+    rot("head", lambda t: (head_x
                            + 1.2 * math.sin(4 * math.pi * t / T - 1.9),
                            -0.8 * math.sin(2 * math.pi * t / T - 0.94), 0))
 
@@ -1131,7 +1145,7 @@ def fire_channels(v: Variant):
 
     # stance minus the head-low layer: fire OVERRIDES every neck segment
     # and the head below (the strike aims itself)
-    st, _pz, _drop = _ground_stance(v)
+    st, _pz, _nx, _hx = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
