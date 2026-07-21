@@ -103,6 +103,11 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
     public float pitchSmooth, pitchSmoothO;
     private float prevBodyYaw;
 
+    // client-side procedural pose state (a DragonPoseFrame; held loosely so
+    // this common-side class needs no client import). Its terrain-IK springs
+    // persist here across render frames.
+    public Object poseState;
+
     public DragonEntity(EntityType<? extends DragonEntity> type, Level level) {
         super(type, level);
         this.setPersistenceRequired();

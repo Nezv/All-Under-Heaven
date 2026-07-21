@@ -2044,6 +2044,91 @@ def _paint_egg_sprite(path):
     img.save(path)
 
 
+def export_rig(v: Variant, path: str):
+    """Physical-rig sidecar consumed by the runtime pose solver in the mod
+    (client/dragon/pose/DragonRig). Every point is GENERATOR space - y up,
+    the dragon faces -Z, +X is the model's left, units are geo units (16
+    per block) - evaluated by FK at the ground stance, i.e. the exact pose
+    idle holds on screen, so the solver's angle deltas are relative to what
+    the player actually sees. The Java side converts rotation deltas into
+    GeckoLib's keyframe convention with (-x, -y, +z) in radians."""
+    st, _plant_z, _neck_x, _head_x = _ground_stance(v)
+    tf = bone_world_transform(st)
+    by = {b.name: b for b in BONES}
+
+    def joint(name):  # stance-space location of a bone's pivot
+        return tf[name](by[name].pivot)
+
+    def axis_x(name):  # bone's local +X unit vector in stance space (CCD axis)
+        p = by[name].pivot
+        o = tf[name](p)
+        e = tf[name]((p[0] + 1.0, p[1], p[2]))
+        d = (e[0] - o[0], e[1] - o[1], e[2] - o[2])
+        n = math.sqrt(sum(c * c for c in d)) or 1.0
+        return (d[0] / n, d[1] / n, d[2] / n)
+
+    def seg_len(child, parent):  # rigid length: rest pivots never stretch
+        return math.dist(by[child].pivot, by[parent].pivot)
+
+    def corners(c):
+        for x in (c.lo[0], c.hi[0]):
+            for y in (c.lo[1], c.hi[1]):
+                for z in (c.lo[2], c.hi[2]):
+                    yield tf[c.bone]((x, y, z))
+
+    def lowest_point(bone_names):
+        pts = [p for c in CUBES if c.bone in bone_names for p in corners(c)]
+        return min(pts, key=lambda p: p[1])
+
+    def leg(name, kind, bones, effector_bones):
+        # CCD chain: joints[] are the rotatable pivots, axes[] their local +X
+        # (the sole bends about X), effector is the ground contact point. A
+        # trailing sentinel joint at the effector lets CCD measure reach.
+        return {"name": name, "kind": kind, "bones": bones,
+                "joints": [joint(b) for b in bones],
+                "axes": [axis_x(b) for b in bones],
+                "effector": lowest_point(effector_bones)}
+
+    legs = []
+    for side in ("l", "r"):
+        legs.append(leg(
+            f"hind_{side}", "hind",
+            [f"leg_{side}_thigh", f"leg_{side}_shin", f"leg_{side}_foot"],
+            {f"leg_{side}_foot", f"leg_{side}_toes"}))
+        legs.append(leg(
+            f"fore_{side}", "fore",
+            [f"wing_{side}_arm", f"wing_{side}_fore", f"wing_{side}_hand"],
+            {f"wing_{side}_hand"}))
+
+    hb = by["head"]
+    n = len(v.neck)
+    neck = {
+        "bones": [f"neck{i}" for i in range(1, n + 1)],
+        "joints": [joint(f"neck{i}") for i in range(1, n + 1)],
+        "axes": [axis_x(f"neck{i}") for i in range(1, n + 1)],
+        "headPivot": joint("head"), "headAxis": axis_x("head"),
+        "headCenter": tf["head"]((hb.pivot[0],
+                                  hb.pivot[1] + 1.5 * 1.18 * SCALE,
+                                  hb.pivot[2] - 5.5 * 1.18 * SCALE)),
+        "headLow": lowest_point({"head", "jaw", "snout", "snout_tip", "brow"}),
+        "muzzle": min((p for c in CUBES if c.bone == "snout_tip"
+                       for p in corners(c)), key=lambda p: p[2]),
+        "headCounter": 0.85}
+
+    segs = sorted((b.name for b in BONES
+                   if b.name.startswith("tail") and b.name != "tail_fin"),
+                  key=lambda s: int(s[4:]))
+    tail = {"bones": segs,
+            "joints": [joint(nm) for nm in segs] + [joint("tail_fin")],
+            "drops": [joint(nm)[1] - lowest_point({nm})[1] for nm in segs]}
+
+    rig = {"variant": v.name, "unitsPerBlock": 16.0,
+           "body": {"pivot": joint("body")},
+           "legs": legs, "neck": neck, "tail": tail}
+    with open(path, "w") as f:
+        json.dump(rig, f, indent=1)
+
+
 def install_assets(v: Variant):
     """Copies one variant's runtime artifacts into the mod resource tree
     (GeckoLib 5 paths; note the plural .animations.json suffix)."""
@@ -2051,7 +2136,8 @@ def install_assets(v: Variant):
     geo_dst = os.path.join(RES_DIR, "geckolib", "models", "entity")
     anim_dst = os.path.join(RES_DIR, "geckolib", "animations", "entity")
     tex_dst = os.path.join(RES_DIR, "textures", "entity")
-    for d in (geo_dst, anim_dst, tex_dst):
+    rig_dst = os.path.join(RES_DIR, "rigs")
+    for d in (geo_dst, anim_dst, tex_dst, rig_dst):
         os.makedirs(d, exist_ok=True)
     shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.geo.json"),
                     os.path.join(geo_dst, f"wyvern_{v.name}.geo.json"))
@@ -2059,6 +2145,8 @@ def install_assets(v: Variant):
                     os.path.join(anim_dst, f"wyvern_{v.name}.animations.json"))
     shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.png"),
                     os.path.join(tex_dst, f"wyvern_{v.name}.png"))
+    shutil.copyfile(os.path.join(OUT_DIR, f"wyvern_{v.name}.rig.json"),
+                    os.path.join(rig_dst, f"wyvern_{v.name}.json"))
 
 
 def install_shared_assets():
@@ -2115,6 +2203,7 @@ def build_variant(v: Variant):
     render_fire_previews(v, fire, fire_len)
     render_fly_previews(v, glide, glide_len, "glide")
     render_fly_previews(v, flyfire, flyfire_len, "flyfire")
+    export_rig(v, os.path.join(OUT_DIR, f"wyvern_{v.name}.rig.json"))
     install_assets(v)
     print(f"{v.name}: bones={len(BONES)} cubes={len(CUBES)} "
           f"fly={fly_len:.2f}s vert={vert_len:.2f}s walk={walk_len:.2f}s "

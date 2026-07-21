@@ -5,6 +5,7 @@ import com.geckolib.model.GeoModel;
 import com.geckolib.renderer.base.GeoRenderState;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.client.dragon.pose.DragonPoseFrame;
 import dev.nez.allunderheaven.feature.dragon.DragonEntity;
 import dev.nez.allunderheaven.feature.dragon.DragonVariant;
 import net.minecraft.resources.Identifier;
@@ -22,6 +23,8 @@ public class DragonModel extends GeoModel<DragonEntity> {
             DataTicket.create("allunderheaven_dragon_bank", Float.class);
     public static final DataTicket<Float> PITCH =
             DataTicket.create("allunderheaven_dragon_pitch", Float.class);
+    public static final DataTicket<DragonPoseFrame> POSE =
+            DataTicket.create("allunderheaven_dragon_pose", DragonPoseFrame.class);
 
     @Override
     public Identifier getModelResource(GeoRenderState renderState) {
