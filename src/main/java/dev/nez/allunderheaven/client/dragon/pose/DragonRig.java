@@ -12,6 +12,7 @@ import dev.nez.allunderheaven.AllUnderHeaven;
 import dev.nez.allunderheaven.feature.dragon.DragonVariant;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -93,9 +94,28 @@ public final class DragonRig {
         if (FAILED.containsKey(variant)) {
             return null;
         }
+        return loadAndLog(variant, Minecraft.getInstance().getResourceManager());
+    }
+
+    /** Re-reads every rig against {@code manager}; called from the client
+     *  resource-reload listener so rig status is logged at every startup and
+     *  F3+T without needing a dragon on screen. */
+    public static void preload(ResourceManager manager) {
+        CACHE.clear();
+        FAILED.clear();
+        for (DragonVariant variant : DragonVariant.values()) {
+            loadAndLog(variant, manager);
+        }
+    }
+
+    private static DragonRig loadAndLog(DragonVariant variant,
+            ResourceManager manager) {
         try {
-            DragonRig rig = load(variant);
+            DragonRig rig = load(variant, manager);
             CACHE.put(variant, rig);
+            AllUnderHeaven.LOGGER.info("[All Under Heaven] dragon pose rig "
+                    + "loaded for {}: {} limbs, {}-segment neck",
+                    variant.key, rig.legs.length, rig.neck.bones.length);
             return rig;
         } catch (Exception e) {
             FAILED.put(variant, Boolean.TRUE);
@@ -106,17 +126,12 @@ public final class DragonRig {
         }
     }
 
-    /** Drops the cache so a resource reload re-reads the sidecars. */
-    public static void invalidate() {
-        CACHE.clear();
-        FAILED.clear();
-    }
-
-    private static DragonRig load(DragonVariant variant) throws Exception {
+    private static DragonRig load(DragonVariant variant, ResourceManager manager)
+            throws Exception {
         Identifier id = AllUnderHeaven.id("rigs/wyvern_" + variant.key + ".json");
         JsonObject root;
-        try (BufferedReader reader = Minecraft.getInstance().getResourceManager()
-                .getResourceOrThrow(id).openAsReader()) {
+        try (BufferedReader reader = manager.getResourceOrThrow(id)
+                .openAsReader()) {
             root = JsonParser.parseReader(reader).getAsJsonObject();
         }
         double upb = root.has("unitsPerBlock")
