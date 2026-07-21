@@ -7,9 +7,11 @@ import com.geckolib.renderer.base.RenderPassInfo;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 
+import dev.nez.allunderheaven.AllUnderHeaven;
 import dev.nez.allunderheaven.client.dragon.pose.DragonPoseFrame;
 import dev.nez.allunderheaven.client.dragon.pose.DragonPoseSolver;
 import dev.nez.allunderheaven.client.dragon.pose.DragonRig;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import dev.nez.allunderheaven.feature.dragon.DragonEntity;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
@@ -69,6 +71,35 @@ public class DragonRenderer extends GeoEntityRenderer<DragonEntity, EntityRender
                 frame.apply(snapshots);
             }
         }
+    }
+
+    private static long lastBoneLogMs;
+
+    /** poseDebug readback: logs where key bones actually RENDER, so the solved
+     *  deltas can be verified on-screen without a screenshot. */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    @Override
+    public void preRenderPass(RenderPassInfo pass,
+            SubmitNodeCollector collector) {
+        super.preRenderPass(pass, collector);
+        if (!DragonPoseSolver.DEBUG) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastBoneLogMs < 1000) {
+            return;
+        }
+        lastBoneLogMs = now;
+        for (String bone : new String[] {"leg_l_foot", "wing_l_hand", "head"}) {
+            pass.addBonePositionListener(bone, (a, b, c) ->
+                    AllUnderHeaven.LOGGER.info(
+                            "[bonepos] {} a={} b={} c={}", bone, fmt(a), fmt(b),
+                            fmt(c)));
+        }
+    }
+
+    private static String fmt(net.minecraft.world.phys.Vec3 v) {
+        return v == null ? "null" : String.format("(%.2f,%.2f,%.2f)", v.x, v.y, v.z);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

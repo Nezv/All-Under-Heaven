@@ -24,16 +24,20 @@ import net.minecraft.world.phys.Vec3;
  * loaded from the client resource pack and cached.
  */
 public final class DragonRig {
-    /** A CCD chain: rotatable {@link #joints} about their local +X {@link #axes},
-     *  ending at the ground-contact {@link #effector}. */
+    /** A CCD chain: rotatable {@link #joints}, each hinging about its
+     *  {@link #axes} entry (stance space), ending at the ground-contact
+     *  {@link #effector}. {@link #slots} says which euler channel each hinge
+     *  is ({@code 'x'} pitch chains, {@code 'z'} the wings' frontal roll). */
     public static final class Chain {
         public final Vec3[] joints;
         public final Vec3[] axes;
+        public final char[] slots;
         public final Vec3 effector;
 
-        Chain(Vec3[] joints, Vec3[] axes, Vec3 effector) {
+        Chain(Vec3[] joints, Vec3[] axes, char[] slots, Vec3 effector) {
             this.joints = joints;
             this.axes = axes;
+            this.slots = slots;
             this.effector = effector;
         }
     }
@@ -157,8 +161,18 @@ public final class DragonRig {
     }
 
     private static Chain chain(JsonObject o) {
-        return new Chain(vecs(o.getAsJsonArray("joints")),
-                vecs(o.getAsJsonArray("axes")), vec(o.getAsJsonArray("effector")));
+        Vec3[] joints = vecs(o.getAsJsonArray("joints"));
+        char[] slots = new char[joints.length];
+        if (o.has("slots")) {
+            JsonArray arr = o.getAsJsonArray("slots");
+            for (int i = 0; i < slots.length; i++) {
+                slots[i] = arr.get(i).getAsString().charAt(0);
+            }
+        } else {
+            java.util.Arrays.fill(slots, 'x');
+        }
+        return new Chain(joints, vecs(o.getAsJsonArray("axes")), slots,
+                vec(o.getAsJsonArray("effector")));
     }
 
     private static String[] strings(JsonArray a) {

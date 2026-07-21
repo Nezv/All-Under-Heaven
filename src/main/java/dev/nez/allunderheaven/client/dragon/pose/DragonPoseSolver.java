@@ -19,22 +19,29 @@ import net.minecraft.world.phys.Vec3;
  *
  * <ul>
  *   <li><b>each foot keeps its own level</b>: per-limb CCD retargets the
- *       contact point onto the terrain column under it (active while walking
- *       too — the gait animation rides on top of the per-leg offset);</li>
+ *       contact point onto the terrain column under it. Hind legs hinge about
+ *       X; the wing-forelimbs hinge about their frontal Z axes with the
+ *       SHOULDER carrying most of the motion (the N°1 dynamic joint) so the
+ *       whole tent rises and falls off the body joint like the reference;</li>
  *   <li><b>the body follows the feet</b>: it settles vertically toward the
- *       fore-knuckle contact deficit (the wing-forelimbs plant high, so the
- *       chest drops until they touch) and pitches/rolls to the support plane,
- *       so the trunk is not glued level to the entity origin;</li>
- *   <li><b>the head never enters a block</b>: the neck lance lifts until the
- *       head center clears the highest surface under and just ahead of it.</li>
+ *       fore-knuckle contact deficit and leans gently to the support plane —
+ *       the limbs absorb terrain first, the trunk averages;</li>
+ *   <li><b>the head never enters a block</b>: the neck lifts until the head
+ *       center clears the highest surface under and just ahead of it.</li>
  * </ul>
  *
  * All maths runs in the model's generator space (+Y up, faces -Z, 16 units per
  * block). Vertical is yaw-invariant, so the IK needs no yaw; body yaw only
  * places the raycast columns. Everything relaxes to zero in flight.
  *
+ * <p>The CCD is proximal-biased (root first, distally damped step weights) so
+ * small corrections look like natural joint motion instead of a folded-up
+ * distal joint slammed to its clamp. Reference implementation and sign
+ * validation: scratchpad {@code ik_ref.py}.
+ *
  * <p>Diagnostics: rig load and first live application are logged at INFO; run
- * with {@code -Dauh.poseDebug=true} for a per-second solver dump.
+ * with {@code -Dauh.poseDebug=true} for per-second solver + rendered-bone
+ * dumps.
  */
 public final class DragonPoseSolver {
     private DragonPoseSolver() {
@@ -49,14 +56,19 @@ public final class DragonPoseSolver {
     private static final double FOOT_PROBE_DOWN = 5.0;
     private static final double HEAD_CLEARANCE = 0.55;
 
-    // solver limits
-    private static final double FOOT_LIMIT_DEG = 55.0;
-    private static final double NECK_SEG_LIMIT_DEG = 34.0;
+    // per-chain joint limits (deg) and proximal-bias step weights
+    private static final double[] HIND_LIMITS = {35.0, 40.0, 25.0};
+    private static final double[] FORE_LIMITS = {40.0, 30.0, 20.0};
+    private static final double[] LIMB_WEIGHTS = {1.0, 0.7, 0.4};
+    private static final double NECK_SEG_LIMIT = 34.0;
     private static final double MAX_NECK_LIFT_UNITS = 46.0;
-    private static final double SETTLE_MAX_UNITS = 12.0;   // body drop toward contact
-    private static final double TILT_GAIN = 0.85;
-    private static final double PITCH_CLAMP_DEG = 25.0;
-    private static final double ROLL_CLAMP_DEG = 20.0;
+
+    // body: limbs absorb terrain first, the trunk follows gently
+    private static final double SETTLE_MAX_UNITS = 8.0;
+    private static final double TILT_GAIN = 0.35;
+    private static final double PITCH_CLAMP_DEG = 12.0;
+    private static final double ROLL_CLAMP_DEG = 10.0;
+    private static final double AIR_FALLBACK_BLOCKS = 1.2;
 
     private static final float BLEND = 0.18F;
     private static final float FLIGHT_RELAX = 0.12F;
@@ -86,10 +98,8 @@ public final class DragonPoseSolver {
                     eff.x, eff.z, FOOT_PROBE_UP, FOOT_PROBE_DOWN);
         }
 
-        // --- 2. body settle: drop the chest toward the fore-knuckle deficit so
-        // the wing-hands actually reach their columns (hind legs retract; their
-        // upward range is huge). Deficit is how far a fore contact hovers above
-        // its ground column.
+        // --- 2. body settle toward the fore-knuckle contact deficit (the
+        // wing-hands' downward reach is short; the chest drops to them)
         double settle = 0;
         int foreCount = 0;
         for (int i = 0; i < rig.legs.length; i++) {
@@ -103,14 +113,13 @@ public final class DragonPoseSolver {
         settle = foreCount == 0 ? 0
                 : Mth.clamp(settle / foreCount, 0, SETTLE_MAX_UNITS);
 
-        // --- 3. body tilt from the support heights (falls back to entity level
-        // for limbs hanging over air so a cliff edge pitches the body forward)
+        // --- 3. gentle body lean toward the support plane
         double foreG = 0, hindG = 0, leftG = 0, rightG = 0;
         int fn = 0, hn = 0, ln = 0, rn = 0;
         for (int i = 0; i < rig.legs.length; i++) {
             DragonRig.Leg leg = rig.legs[i];
             double sample = Double.isNaN(ground[i])
-                    ? origin.y - FOOT_PROBE_DOWN * 0.6 : ground[i];
+                    ? origin.y - AIR_FALLBACK_BLOCKS : ground[i];
             if (leg.fore) {
                 foreG += sample; fn++;
             } else {
@@ -134,18 +143,17 @@ public final class DragonPoseSolver {
                     -ROLL_CLAMP_DEG, ROLL_CLAMP_DEG);
         }
 
-        // --- 4. per-limb CCD onto each column, solved against the SETTLED body
-        // (joints ride down with the chest), always active while grounded
+        // --- 4. per-limb CCD onto each column, against the settled body
         for (int i = 0; i < rig.legs.length; i++) {
             if (Double.isNaN(ground[i])) {
                 continue;                        // over air: keep animated pose
             }
             DragonRig.Leg leg = rig.legs[i];
             double targetY = (ground[i] - origin.y) / bpu;
-            double[] ang = ccdVertical(leg.chain, settle, targetY,
-                    35.0, 24, FOOT_LIMIT_DEG);
+            double[] ang = ccdVertical(leg.chain, settle, targetY, 20.0, 16,
+                    leg.fore ? FORE_LIMITS : HIND_LIMITS, LIMB_WEIGHTS);
             for (int b = 0; b < leg.bones.length; b++) {
-                putX(target, leg.bones[b], (float) ang[b]);
+                put(target, leg.bones[b], leg.chain.slots[b], (float) ang[b]);
             }
         }
 
@@ -158,11 +166,23 @@ public final class DragonPoseSolver {
             long now = System.currentTimeMillis();
             if (now - lastDebugMs > 1000) {
                 lastDebugMs = now;
+                StringBuilder g = new StringBuilder();
+                for (int i = 0; i < rig.legs.length; i++) {
+                    g.append(rig.legs[i].name).append('=')
+                     .append(Double.isNaN(ground[i]) ? "air"
+                             : String.format("%+.2f", ground[i] - origin.y))
+                     .append(' ');
+                }
                 AllUnderHeaven.LOGGER.info(
-                        "[pose] id={} settle={}u pitch={} roll={} bones={} {}",
-                        dragon.getId(), String.format("%.1f", settle),
+                        "[pose] id={} at=({},{},{}) yaw={} settle={}u pitch={} "
+                        + "roll={} ground[{}] {}",
+                        dragon.getId(), String.format("%.1f", origin.x),
+                        String.format("%.1f", origin.y),
+                        String.format("%.1f", origin.z),
+                        String.format("%.0f", dragon.yBodyRot),
+                        String.format("%.1f", settle),
                         String.format("%.1f", pitch), String.format("%.1f", roll),
-                        target.size(), summarize(target));
+                        g.toString().trim(), summarize(target));
             }
         }
     }
@@ -184,26 +204,34 @@ public final class DragonPoseSolver {
         }
         double liftUnits = Math.min((desiredWorldY - currentWorldY) / bpu,
                 MAX_NECK_LIFT_UNITS);
-        DragonRig.Chain chain = new DragonRig.Chain(neck.joints, neck.axes, hc);
+        char[] slots = new char[neck.joints.length];
+        java.util.Arrays.fill(slots, 'x');
+        DragonRig.Chain chain =
+                new DragonRig.Chain(neck.joints, neck.axes, slots, hc);
+        double[] limits = new double[neck.joints.length];
+        double[] weights = new double[neck.joints.length];
+        java.util.Arrays.fill(limits, NECK_SEG_LIMIT);
+        java.util.Arrays.fill(weights, 1.0);
         double[] ang = ccdVertical(chain, settle, hc.y - settle + liftUnits,
-                16.0, 40, NECK_SEG_LIMIT_DEG);
+                14.0, 24, limits, weights);
         double sum = 0;
         for (int i = 0; i < neck.bones.length; i++) {
-            putX(target, neck.bones[i], (float) ang[i]);
+            put(target, neck.bones[i], 'x', (float) ang[i]);
             sum += ang[i];
         }
         // counter-rotate the head so the face stays level while the neck rises
-        putX(target, "head", (float) (-sum * neck.headCounter));
+        put(target, "head", 'x', (float) (-sum * neck.headCounter));
     }
 
     // ---------------------------------------------------------------- CCD core
-    // Validated against the generator's FK in the scratchpad reference
-    // (ik_ref.py): rotating about each joint's live local +X axis, with the
-    // downstream pivots AND axes carried along, converges on the target and
-    // yields zero deltas when the target is the rest pose.
+    // Proximal-biased: root-first sweeps with distally-decreasing step weights
+    // find the natural "whole limb moves from its body joint" solution instead
+    // of folding the last joint to its clamp. Downstream pivots AND their
+    // hinge axes rotate together with the effector (validated in ik_ref.py).
 
     private static double[] ccdVertical(DragonRig.Chain chain, double settle,
-            double targetY, double maxStepDeg, int iters, double limitDeg) {
+            double targetY, double maxStepDeg, int iters, double[] limits,
+            double[] weights) {
         int n = chain.joints.length;
         Vec3 drop = new Vec3(0, -settle, 0);
         Vec3[] p = new Vec3[n];
@@ -215,9 +243,11 @@ public final class DragonPoseSolver {
         Vec3 e = chain.effector.add(drop);
         Vec3 t = new Vec3(e.x, targetY, e.z);
         double[] ang = new double[n];
-        double maxStep = Math.toRadians(maxStepDeg);
         for (int it = 0; it < iters; it++) {
-            for (int i = n - 1; i >= 0; i--) {
+            if (Math.abs(e.y - t.y) < 0.3) {
+                break;
+            }
+            for (int i = 0; i < n; i++) {
                 Vec3 piv = p[i], a = ax[i];
                 Vec3 r = perp(e.subtract(piv), a);
                 Vec3 rt = perp(t.subtract(piv), a);
@@ -226,13 +256,14 @@ public final class DragonPoseSolver {
                     continue;
                 }
                 double ca = Mth.clamp(r.dot(rt) / (lr * lt), -1.0, 1.0);
-                double step = Math.acos(ca);
+                double step = Math.acos(ca) * 0.6;         // damped
                 if (r.cross(rt).dot(a) < 0) {
                     step = -step;
                 }
-                step = Mth.clamp(step, -maxStep, maxStep);
+                double cap = Math.toRadians(maxStepDeg) * weights[i];
+                step = Mth.clamp(step, -cap, cap);
                 double next = Mth.clamp(ang[i] + Math.toDegrees(step),
-                        -limitDeg, limitDeg);
+                        -limits[i], limits[i]);
                 step = Math.toRadians(next - ang[i]);
                 ang[i] = next;
                 for (int j = i + 1; j < n; j++) {
@@ -301,15 +332,18 @@ public final class DragonPoseSolver {
         return Math.max(1.0, Math.abs(a / Math.max(1, an) - b / Math.max(1, bn)));
     }
 
-    private static void putX(Map<String, float[]> target, String bone, float dx) {
-        target.computeIfAbsent(bone, n -> new float[3])[0] += dx;
+    private static void put(Map<String, float[]> target, String bone, char slot,
+            float deg) {
+        target.computeIfAbsent(bone, n -> new float[3])[slot == 'z' ? 2 : 0]
+                += deg;
     }
 
     private static String summarize(Map<String, float[]> target) {
         StringBuilder sb = new StringBuilder();
         target.forEach((k, v) -> {
-            if (Math.abs(v[0]) > 2.0F) {
-                sb.append(k).append('=').append(Math.round(v[0])).append("° ");
+            float mag = Math.abs(v[0]) > Math.abs(v[2]) ? v[0] : v[2];
+            if (Math.abs(mag) > 2.0F) {
+                sb.append(k).append('=').append(Math.round(mag)).append("° ");
             }
         });
         return sb.toString();

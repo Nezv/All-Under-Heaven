@@ -807,30 +807,126 @@ def _smoothstep(a, b, t):
     return u * u * (3 - 2 * u)
 
 
-def _solve_plant(pose_base, fore_yaw=22.0, target_y=4.5):
-    """Finds the left forearm Z delta that lands the WRIST at target_y
-    (world, scaled units - claw clearance above the ground) given the rest
-    of the static pose. Bisects the branch between near-vertical (-128,
-    lowest reach) and shallow (-40, highest); per-variant wing lengths get
-    per-variant answers, which is what actually plants the knuckle."""
-    by = {b.name: b for b in BONES}
-    hand = by["wing_l_hand"]
+EDGE_YAW = -14.0  # finger 1 total local yaw: continues the leading edge
 
-    def wrist_y(dz):
+
+def _solve_hind(pose_base, thigh, shin0, foot0, target_y=0.4):  # -> (thigh, shin, foot)
+    """Re-solves a crouch's shin/foot deltas so the toe pads rest ON the
+    ground (lowest toe corner at target_y) instead of folding through it.
+    With the baked stance planted, the runtime foot IK idles at zero on
+    flat ground and only acts on real terrain. Scans the shin delta with a
+    partial foot counter-rotation that keeps the foot near-vertical."""
+    toe_cubes = [c for c in CUBES if c.bone in ("leg_l_toes", "leg_l_foot")]
+
+    def sole_y(d0, d1, d2):
         pose = dict(pose_base)
-        pose["wing_l_fore"] = {"rotation": (0.0, fore_yaw, dz)}
-        return bone_world_transform(pose)[hand.parent](hand.pivot)[1]
+        for side in ("l", "r"):
+            pose[f"leg_{side}_thigh"] = {"rotation": (thigh + d0, 0, 0)}
+            pose[f"leg_{side}_shin"] = {"rotation": (shin0 + d1, 0, 0)}
+            pose[f"leg_{side}_foot"] = {"rotation": (foot0 + d2, 0, 0)}
+        tf = bone_world_transform(pose)
+        return min(tf[c.bone]((x, y, z))[1] for c in toe_cubes
+                   for x in (c.lo[0], c.hi[0]) for y in (c.lo[1], c.hi[1])
+                   for z in (c.lo[2], c.hi[2]))
 
-    lo, hi = -128.0, -40.0
-    if wrist_y(lo) > target_y:
-        return lo  # wing too short to reach lower - plant as deep as it goes
-    for _ in range(28):
+    # 3-DOF grid (thigh raises the knee, shin/foot re-plant): land the sole
+    # at target_y with the smallest total joint change. Coarse pass, then a
+    # fine pass around the winner.
+    def scan(t_rng, s_rng, f_rng, step):
+        best, best_key = None, None
+        t = t_rng[0]
+        while t <= t_rng[1]:
+            s_ = s_rng[0]
+            while s_ <= s_rng[1]:
+                f_ = f_rng[0]
+                while f_ <= f_rng[1]:
+                    err = abs(sole_y(t, s_, f_) - target_y)
+                    key = (round(err, 1), abs(t) + abs(s_) + abs(f_))
+                    if best_key is None or key < best_key:
+                        best_key, best = key, (t, s_, f_)
+                    f_ += step
+                s_ += step
+            t += step
+        return best
+
+    c = scan((0.0, 36.0), (-36.0, 12.0), (-24.0, 24.0), 4.0)
+    c = scan((c[0] - 3, c[0] + 3), (c[1] - 3, c[1] + 3), (c[2] - 3, c[2] + 3),
+             1.0)
+    return thigh + c[0], shin0 + c[1], foot0 + c[2]
+
+
+def _solve_plant(pose_base, v, fore_yaw=22.0, pad=1.5):
+    """The reference wing tent (Bruno's red lines on the GoT beach still):
+    the humerus rises to the HIGHEST apex from which the leading edge can
+    still descend and plant on the ground - a tall inverted V each side.
+    The descending edge is the forearm CONTINUED by the leading finger's
+    first spar (the fan pitches finger 1 almost straight down the forearm
+    line), so the ground contact is the finger-1 knuckle pad, out wide and
+    forward of the chest exactly like the reference.
+
+    Two nested solves over the left wing (mirror with *sx per side):
+      outer - arm Z-roll: bisected to the LARGEST apex angle from which the
+              WRIST still reaches its target height (pad + the drop that
+              finger 1 adds below the wrist);
+      inner - forearm Z: chosen on the shallow side of its lowest-reach
+              swing so the edge leans out/forward, not under the chest.
+    Returns (arm_z, fore_z) rotation deltas."""
+    by = {b.name: b for b in BONES}
+    # ground contact = the finger-1 knuckle: FK the finger1a tip (= the
+    # finger1b pivot, rigid under finger1) with finger 1 pitched onto the
+    # leading-edge line, so the solve needs no drop estimate at all.
+    tip_a = by["wing_l_finger1b"].pivot
+    yaw1 = v.fingers[0][0]
+
+    def contact_y(arm_z, fore_z):
+        pose = dict(pose_base)
+        pose["wing_l_arm"] = {"rotation": (0.0, -10.0, arm_z)}
+        pose["wing_l_fore"] = {"rotation": (0.0, fore_yaw, fore_z)}
+        pose["wing_l_finger1"] = {"rotation": (0.0, EDGE_YAW + yaw1, 0.0)}
+        return bone_world_transform(pose)["wing_l_finger1"](tip_a)[1]
+
+    target_y = pad
+
+    def lowest(arm_z):
+        # ternary search: contact height over fore_z is smooth with one dip
+        lo, hi = -170.0, -40.0
+        for _ in range(40):
+            m1 = lo + (hi - lo) / 3
+            m2 = hi - (hi - lo) / 3
+            if contact_y(arm_z, m1) < contact_y(arm_z, m2):
+                hi = m2
+            else:
+                lo = m1
         mid = (lo + hi) / 2
-        if wrist_y(mid) > target_y:
-            hi = mid
+        return contact_y(arm_z, mid), mid
+
+    # largest apex that still reaches the target (cap just shy of vertical)
+    lo_a, hi_a = -6.0, 62.0
+    if lowest(hi_a)[0] <= target_y:
+        arm_z = hi_a
+    elif lowest(lo_a)[0] > target_y:
+        arm_z = lo_a  # wing too short even flat - plant as deep as it goes
+    else:
+        for _ in range(26):
+            mid = (lo_a + hi_a) / 2
+            if lowest(mid)[0] <= target_y:
+                lo_a = mid
+            else:
+                hi_a = mid
+        arm_z = lo_a
+
+    # forearm: bisect on the shallow branch (between lowest reach and -40)
+    _, deepest = lowest(arm_z)
+    lo_f, hi_f = deepest, -40.0
+    if contact_y(arm_z, lo_f) > target_y:
+        return arm_z, lo_f
+    for _ in range(28):
+        mid = (lo_f + hi_f) / 2
+        if contact_y(arm_z, mid) > target_y:
+            hi_f = mid
         else:
-            lo = mid
-    return (lo + hi) / 2
+            lo_f = mid
+    return arm_z, (lo_f + hi_f) / 2
 
 
 def _solve_head_low(v: Variant, pose_base, target_y=18.0):
@@ -891,38 +987,44 @@ def _ground_stance(v: Variant):
     the ground (muzzle level). Returns (static_channels, plant_z, drop);
     animations layer motion by overwriting entries with time functions
     (neck overrides should re-add the drop unless they aim themselves)."""
-    base = {"body": {"position": (0, -9.0 * SCALE, 0)},
-            "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
+    base = {"body": {"position": (0, -9.0 * SCALE, 0)}}
+    thigh_g, shin_g, foot_g = _solve_hind(base, 22, -20, -2)
     for side in ("l", "r"):
-        base[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
-        base[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
-        base[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
-    plant_z = _solve_plant(base)
+        base[f"leg_{side}_thigh"] = {"rotation": (thigh_g, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (shin_g, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (foot_g, 0, 0)}
+    arm_z, fore_z = _solve_plant(base, v)
     st: dict[str, dict[str, object]] = {
         "body": {"position": (0, -9.0 * SCALE, 0)}}
     n_f = len(v.fingers)
     for side, sx in (("l", 1), ("r", -1)):
-        st[f"wing_{side}_arm"] = {"rotation": (0, -10 * sx, 30 * sx)}
-        st[f"wing_{side}_fore"] = {"rotation": (0, 22 * sx, plant_z * sx)}
-        # with the forearm near-vertical, finger yaw sweeps the SAGITTAL
-        # plane (local +X points at the ground, -90 is horizontal-back, past
-        # -90 rises): all ribs radiate from the planted wrist, the front rib
-        # climbing steepest, each one behind shallower - the reference fan.
+        st[f"wing_{side}_arm"] = {"rotation": (0, -10 * sx, arm_z * sx)}
+        st[f"wing_{side}_fore"] = {"rotation": (0, 22 * sx, fore_z * sx)}
+        # reference tent: finger 1 CONTINUES the descending leading edge to
+        # the ground (its knuckle pad is the actual contact _solve_plant
+        # lands), its tip segment kinks back off the pad; the remaining
+        # fingers sweep progressively back-up from the contact, carrying
+        # the membrane as the tent wall behind the leading edge.
         for fi, (yaw_rest, _fl) in enumerate(v.fingers, 1):
             t_f = (fi - 1) / max(1, n_f - 1)
-            target = -(156.0 - 46.0 * t_f)  # total local yaw: steep -> shallow
+            if fi == 1:
+                target = EDGE_YAW           # ride the leading edge down
+                b_yaw = -26.0               # tip kinks back past the pad
+            else:
+                target = -(58.0 + 72.0 * t_f)   # membrane fan: back -> folded
+                b_yaw = -(34.0 - 8.0 * t_f)
             st[f"wing_{side}_finger{fi}"] = {
                 "rotation": (0, (target + yaw_rest) * sx, 0)}
             st[f"wing_{side}_finger{fi}b"] = {
-                "rotation": (0, -(38.0 - 10.0 * t_f) * sx, 0)}
-        st[f"leg_{side}_thigh"] = {"rotation": (22, 0, 0)}
-        st[f"leg_{side}_shin"] = {"rotation": (-20, 0, 0)}
-        st[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
+                "rotation": (0, b_yaw * sx, 0)}
+        st[f"leg_{side}_thigh"] = {"rotation": (thigh_g, 0, 0)}
+        st[f"leg_{side}_shin"] = {"rotation": (shin_g, 0, 0)}
+        st[f"leg_{side}_foot"] = {"rotation": (foot_g, 0, 0)}
     neck_x, head_x = _solve_head_low(v, st)
     for i, x in enumerate(neck_x, 1):
         st[f"neck{i}"] = {"rotation": (x, 0.0, 0.0)}
     st["head"] = {"rotation": (head_x, 0.0, 0.0)}
-    return st, plant_z, neck_x, head_x
+    return st, (arm_z, fore_z), neck_x, head_x
 
 
 def idle_channels(v: Variant):
@@ -947,13 +1049,13 @@ def idle_channels(v: Variant):
     # --- planted wings: the beach stance uses the wings as FRONT LEGS
     # (shared _ground_stance: solved knuckle plant + finger fan + crouch +
     # head-low neck); slow breathing rides the planted humerus on top
-    st, _plant, neck_x, head_x = _ground_stance(v)
+    st, (arm_z, _fore_z), neck_x, head_x = _ground_stance(v)
     for b, chans in st.items():
         for cname, vec in chans.items():
             ch.setdefault(b, {})[cname] = vec
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
-            lambda t, s=sx: (0, -10 * s, s * (30 + 2.2 * breath(t))))
+            lambda t, s=sx: (0, -10 * s, s * (arm_z + 2.2 * breath(t))))
 
     # --- scout gaze: +1 = dragon-left (-X), -1 = right, 0 = ahead ---
     def gaze(t):
@@ -1030,13 +1132,13 @@ def walk_channels(v: Variant):
 
     # walking rides higher than the sitting crouch: body up, legs longer,
     # forearm plant re-solved for the raised shoulder
-    base = {"body": {"position": (0, -7.8 * SCALE, 0)},
-            "wing_l_arm": {"rotation": (0.0, -10.0, 30.0)}}
+    base = {"body": {"position": (0, -7.8 * SCALE, 0)}}
+    thigh_w, shin_w, foot_w = _solve_hind(base, 19, -17, -2)
     for side in ("l", "r"):
-        base[f"leg_{side}_thigh"] = {"rotation": (19, 0, 0)}
-        base[f"leg_{side}_shin"] = {"rotation": (-17, 0, 0)}
-        base[f"leg_{side}_foot"] = {"rotation": (-2, 0, 0)}
-    plant_z = _solve_plant(base)
+        base[f"leg_{side}_thigh"] = {"rotation": (thigh_w, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (shin_w, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (foot_w, 0, 0)}
+    arm_zw, fore_zw = _solve_plant(base, v)
 
     SW = 0.30  # fraction of the cycle each limb spends in the air
 
@@ -1062,11 +1164,11 @@ def walk_channels(v: Variant):
     for side in ("l", "r"):
         p = PH[f"leg_{side}"]
         rot(f"leg_{side}_thigh",
-            lambda t, p=p: (19 + 15.0 * gait(t, p), 0, 0))
+            lambda t, p=p: (thigh_w + 15.0 * gait(t, p), 0, 0))
         rot(f"leg_{side}_shin",
-            lambda t, p=p: (-17 - 17.0 * lift(t, p), 0, 0))
+            lambda t, p=p: (shin_w - 17.0 * lift(t, p), 0, 0))
         rot(f"leg_{side}_foot",
-            lambda t, p=p: (-2 - 9.0 * lift(t, p) + 4.0 * gait(t, p), 0, 0))
+            lambda t, p=p: (foot_w - 9.0 * lift(t, p) + 4.0 * gait(t, p), 0, 0))
 
     # wing forelimbs: the humerus pendulums about X (elbow back = wrist
     # back), the forearm eases its solved plant angle open during the swing
@@ -1075,10 +1177,10 @@ def walk_channels(v: Variant):
         p = PH[f"wing_{side}"]
         rot(f"wing_{side}_arm",
             lambda t, s=sx, p=p: (-9.0 * gait(t, p), -10 * s,
-                                  s * (30 + 3.0 * lift(t, p))))
+                                  s * (arm_zw + 3.0 * lift(t, p))))
         rot(f"wing_{side}_fore",
             lambda t, s=sx, p=p: (0, 22 * s,
-                                  s * (plant_z + 16.0 * lift(t, p))))
+                                  s * (fore_zw + 16.0 * lift(t, p))))
 
     # body: two-bump heave on the diagonal supports, roll onto the planted
     # forelimb, slow shoulder yaw - all small, this is tonnes of dragon
@@ -1159,24 +1261,24 @@ def fire_channels(v: Variant):
     # reared stance: chest lifts off the forelimbs as far as the forearm
     # can still reach the ground, hind legs extend a little, forearm plant
     # re-solved for the raised chest + mildly flared elbow
-    base = {"body": {"position": (0, -7.4 * SCALE, 0), "rotation": (2.5, 0, 0)},
-            "wing_l_arm": {"rotation": (0.0, -10.0, 33.0)}}
+    base = {"body": {"position": (0, -7.4 * SCALE, 0), "rotation": (2.5, 0, 0)}}
+    thigh_f, shin_f, foot_f = _solve_hind(base, 16, -15, -1)
     for side in ("l", "r"):
-        base[f"leg_{side}_thigh"] = {"rotation": (16, 0, 0)}
-        base[f"leg_{side}_shin"] = {"rotation": (-15, 0, 0)}
-        base[f"leg_{side}_foot"] = {"rotation": (-1, 0, 0)}
-    fz = _solve_plant(base)
+        base[f"leg_{side}_thigh"] = {"rotation": (thigh_f, 0, 0)}
+        base[f"leg_{side}_shin"] = {"rotation": (shin_f, 0, 0)}
+        base[f"leg_{side}_foot"] = {"rotation": (foot_f, 0, 0)}
+    arm_zf, fz = _solve_plant(base, v)
     pos("body", lambda t: (
         0, SCALE * (-7.4 + 0.35 * math.sin(4 * math.pi * t / T)), 0))
     rot("body", lambda t: (2.5 + 0.4 * trem(t), 0, 0))
     for side, sx in (("l", 1), ("r", -1)):
         rot(f"wing_{side}_arm",
-            lambda t, s=sx: (0, -10 * s, s * (33 + 1.5 * math.sin(
+            lambda t, s=sx: (0, -10 * s, s * (arm_zf + 1.5 * math.sin(
                 4 * math.pi * t / T + 0.8))))
         rot(f"wing_{side}_fore", (0, 22 * sx, fz * sx))
-        rot(f"leg_{side}_thigh", (16, 0, 0))
-        rot(f"leg_{side}_shin", (-15, 0, 0))
-        rot(f"leg_{side}_foot", (-1, 0, 0))
+        rot(f"leg_{side}_thigh", (thigh_f, 0, 0))
+        rot(f"leg_{side}_shin", (shin_f, 0, 0))
+        rot(f"leg_{side}_foot", (foot_f, 0, 0))
 
     # neck: the base coils up and back (front-loaded arc), the head end
     # levels onto the target; the last segments carry a share of the rake
@@ -2059,13 +2161,19 @@ def export_rig(v: Variant, path: str):
     def joint(name):  # stance-space location of a bone's pivot
         return tf[name](by[name].pivot)
 
-    def axis_x(name):  # bone's local +X unit vector in stance space (CCD axis)
+    def axis(name, unit):  # bone-local unit vector in stance space (CCD axis)
         p = by[name].pivot
         o = tf[name](p)
-        e = tf[name]((p[0] + 1.0, p[1], p[2]))
+        e = tf[name]((p[0] + unit[0], p[1] + unit[1], p[2] + unit[2]))
         d = (e[0] - o[0], e[1] - o[1], e[2] - o[2])
         n = math.sqrt(sum(c * c for c in d)) or 1.0
         return (d[0] / n, d[1] / n, d[2] / n)
+
+    def axis_x(name):  # hinge for pure-pitch chains (legs, neck, head)
+        return axis(name, (1.0, 0.0, 0.0))
+
+    def axis_z(name):  # frontal hinge for the wing limbs (their long axis
+        return axis(name, (0.0, 0.0, 1.0))  # is X, so X-rolls move nothing)
 
     def seg_len(child, parent):  # rigid length: rest pivots never stretch
         return math.dist(by[child].pivot, by[parent].pivot)
@@ -2080,13 +2188,17 @@ def export_rig(v: Variant, path: str):
         pts = [p for c in CUBES if c.bone in bone_names for p in corners(c)]
         return min(pts, key=lambda p: p[1])
 
-    def leg(name, kind, bones, effector_bones):
-        # CCD chain: joints[] are the rotatable pivots, axes[] their local +X
-        # (the sole bends about X), effector is the ground contact point. A
-        # trailing sentinel joint at the effector lets CCD measure reach.
+    def leg(name, kind, bones, effector_bones, hinge):
+        # CCD chain: joints[] are the rotatable pivots, axes[] each joint's
+        # hinge direction in stance space, slots[] the euler channel that
+        # hinge corresponds to ("x" pitch chains, "z" the wings' frontal
+        # roll - their long axis IS X, so X-rolls would move nothing), and
+        # effector is the ground contact point.
+        ax = axis_x if hinge == "x" else axis_z
         return {"name": name, "kind": kind, "bones": bones,
                 "joints": [joint(b) for b in bones],
-                "axes": [axis_x(b) for b in bones],
+                "axes": [ax(b) for b in bones],
+                "slots": [hinge] * len(bones),
                 "effector": lowest_point(effector_bones)}
 
     legs = []
@@ -2094,11 +2206,11 @@ def export_rig(v: Variant, path: str):
         legs.append(leg(
             f"hind_{side}", "hind",
             [f"leg_{side}_thigh", f"leg_{side}_shin", f"leg_{side}_foot"],
-            {f"leg_{side}_foot", f"leg_{side}_toes"}))
+            {f"leg_{side}_foot", f"leg_{side}_toes"}, "x"))
         legs.append(leg(
             f"fore_{side}", "fore",
             [f"wing_{side}_arm", f"wing_{side}_fore", f"wing_{side}_hand"],
-            {f"wing_{side}_hand"}))
+            {f"wing_{side}_hand", f"wing_{side}_finger1"}, "z"))
 
     hb = by["head"]
     n = len(v.neck)
