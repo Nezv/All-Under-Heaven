@@ -392,26 +392,28 @@ def build_wyvern(v: Variant):
         for fi, (yaw, raw_len) in enumerate(v.fingers, 1):
             length = raw_len * ws
             la, lb = length * 0.55, length * 0.5
-            depth = (22 if fi < finger_count else 17) * ws
+            depth = (26 if fi < finger_count else 20) * ws
             fa = bone(f"wing_{side}_finger{fi}", hand, base,
                       rot=(0, -yaw * sx, 0), color=v.hide_dark)
             cube(fa, (base[0] + (la / 2) * sx, base[1], base[2]), (la, 2.0, 2.0))
-            # cambered strip: per-cube rotation droops the trailing edge and
-            # sweeps it diagonal - membrane sag, not a flat rectangle
-            cube(fa, (base[0] + (la / 2 + 1) * sx, base[1] - 0.4,
-                      base[2] + depth * 0.375 + 1.2), (la - 2, 0.6, depth * 0.75),
-                 color=v.membrane, rot=(10, -6 * sx, 0))
+            # WEBBING as a zero-thickness plane behind the spar: a flat sheet
+            # the texture then CARVES (alpha) into the scalloped bat-membrane
+            # silhouette - no thick rim, the standard Minecraft technique.
+            # The plane reaches full depth so the carve owns the free edge.
+            cube(fa, (base[0] + (la / 2 + 1) * sx, base[1] - 0.3,
+                      base[2] + depth * 0.5 + 1.0), (la + 1, 0.0, depth),
+                 color=v.membrane, rot=(9, -5 * sx, 0))
             tip_a = (base[0] + la * sx, base[1], base[2])
             fb = bone(f"wing_{side}_finger{fi}b", fa, tip_a,
                       rot=(0, -6 * sx, 0), color=v.hide_dark)
             cube(fb, (tip_a[0] + (lb / 2) * sx, tip_a[1], tip_a[2]),
                  (lb, 1.5, 1.5))
-            cube(fb, (tip_a[0] + (lb / 2) * sx, tip_a[1] - 0.4,
-                      tip_a[2] + depth * 0.30 + 1.0), (lb - 1.5, 0.6, depth * 0.60),
-                 color=v.membrane, rot=(16, -12 * sx, 0))
-        # armpit membrane between forearm and body
-        cube(fore, (elbow[0] + 12 * ws * sx, elbow[1] - 1.2, elbow[2] + 8.5),
-             (24 * ws, 0.6, 14), color=v.membrane)
+            cube(fb, (tip_a[0] + (lb / 2) * sx, tip_a[1] - 0.3,
+                      tip_a[2] + depth * 0.42 + 0.8), (lb, 0.0, depth * 0.85),
+                 color=v.membrane, rot=(14, -10 * sx, 0))
+        # brachial membrane (arm to first finger) as a carved plane too
+        cube(fore, (elbow[0] + 12 * ws * sx, elbow[1] - 1.0, elbow[2] + 9.0),
+             (24 * ws, 0.0, 15), color=v.membrane)
 
     build_wing("l", 1)
     build_wing("r", -1)
@@ -1450,31 +1452,63 @@ def _paint_belly(drw, r, base, rng):
     _edge_ao(drw, r, base, 0.85)
 
 
-def _paint_membrane(drw, r, base, rng, c: Cube, fname):
+def _membrane_depth(f):
+    """Trailing-edge depth (fraction 0..1 of the panel's Z extent) as a
+    function of position along the finger f (0 = wrist root, 1 = fingertip).
+    A bat sail: one smooth concave web that climbs off the wrist, bellies
+    out full behind the spar, then the fingertip pinches it back in - a
+    single deliberate scallop per finger gap, the free edge the reference
+    carves rather than a filled rectangle."""
+    rise = _smoothstep(0.0, 0.66, f)               # climb off the wrist
+    tip = 1.0 - 0.42 * _smoothstep(0.84, 1.0, f)   # fingertip pinch
+    return (0.42 + 0.58 * rise) * tip
+
+
+def _paint_membrane(drw, img, r, base, rng, c: Cube, fname):
+    """Carves the membrane: only the sail-shaped region is painted, the rest
+    stays transparent (alpha 0) so the render type's translucency cuts the
+    organic silhouette - Bruno's 'leave a few pixels invisible' technique.
+    The leading edge (top of the rect) rides the finger spar; the trailing
+    free edge is the carved scallop from _membrane_depth."""
     x1, y1, x2, y2 = _norm_rect(r)
     w, h = x2 - x1, y2 - y1
-    if fname not in ("up", "down") or w < 10 or h < 6:
-        drw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=_sh(base, 0.9))
-        return
-    # stretched skin: light passes through the middle, edges stay dark
-    for row in range(y1, y2):
-        t = (row - y1) / max(1, h - 1)
-        drw.line([(x1, row), (x2 - 1, row)],
-                 fill=_sh(base, 0.94 + 0.18 * math.sin(math.pi * t)))
-    # veins fan from the wrist-side leading corner toward the trailing edge
+    if fname not in ("up", "down") or w < 6 or h < 4:
+        return  # degenerate rim faces of the plane: nothing to draw
     left_wing = "_l_" in c.bone
-    ox = x1 + 1 if left_wing else x2 - 2
+    skin = lambda t: _sh(base, 0.9 + 0.2 * math.sin(math.pi * min(1.0, t)))
     vein = _sh(base, 0.72)
-    n = max(4, w // 12)
+    ao = _sh(base, 0.66)
+    wrist_x = x1 if left_wing else x2 - 1
+    trail = {}                                    # column -> trailing row
+    for col in range(x1, x2):
+        f = (col - x1) / max(1, w - 1)
+        if not left_wing:
+            f = 1.0 - f
+        d = _membrane_depth(f)
+        yt = y1 + int(round(d * (h - 1)))
+        trail[col] = yt
+        if yt <= y1:
+            continue
+        for row in range(y1, yt + 1):
+            drw.point((col, row), fill=skin((row - y1) / max(1, h - 1)))
+        drw.point((col, y1), fill=ao)             # leading edge along the spar
+        drw.point((col, yt), fill=ao)             # scalloped trailing edge
+    # veins fan from the wrist-leading corner out toward the trailing edge,
+    # clipped to the carved sail
+    n = max(4, w // 10)
     for k in range(n):
         t = (k + 1) / (n + 1)
-        ex = x1 + int(t * (w - 1)) if not left_wing else x2 - 1 - int(t * (w - 1))
-        ey = y2 - 1
-        mx = (ox + ex) // 2 + rng.randint(-2, 2)
-        my = (y1 + ey) // 2 + rng.randint(-2, 2)
-        drw.line([(ox, y1 + 1), (mx, my)], fill=vein)
-        drw.line([(mx, my), (ex, ey)], fill=vein)
-    _edge_ao(drw, (x1, y1, x2, y2), base, 0.78)
+        ex = x1 + int(t * (w - 1))
+        ey = trail.get(ex, y1)
+        if ey <= y1:
+            continue
+        steps = max(abs(ex - wrist_x), ey - y1)
+        for s in range(steps + 1):
+            u = s / max(1, steps)
+            px = int(wrist_x + (ex - wrist_x) * u)
+            py = int(y1 + (ey - y1) * u)
+            if py <= trail.get(px, y1):
+                drw.point((px, py), fill=vein)
 
 
 def _paint_horn(drw, r, base, rng):
@@ -1532,7 +1566,7 @@ def paint_texture(v: Variant, path):
             elif mat == "belly":
                 _paint_belly(drw, r, base, rng)
             elif mat == "membrane":
-                _paint_membrane(drw, rect, base, rng, c, fname)
+                _paint_membrane(drw, img, rect, base, rng, c, fname)
             elif mat in ("horn", "teeth"):
                 _paint_horn(drw, r, base, rng)
             elif mat == "ridge":
