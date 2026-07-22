@@ -1,0 +1,10 @@
+{
+  "layers": {
+    "humanoid": [
+      { "texture": "allunderheaven:dragonlord" }
+    ],
+    "humanoid_leggings": [
+      { "texture": "allunderheaven:dragonlord" }
+    ]
+  }
+}

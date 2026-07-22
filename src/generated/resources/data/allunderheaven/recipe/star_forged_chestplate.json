@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "M": "allunderheaven:star_forged_steel"
+  },
+  "pattern": [
+    "M M",
+    "MMM",
+    "MMM"
+  ],
+  "result": {
+    "id": "allunderheaven:star_forged_chestplate"
+  }
+}

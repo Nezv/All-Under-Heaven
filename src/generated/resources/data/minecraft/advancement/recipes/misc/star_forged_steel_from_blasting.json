@@ -1,0 +1,32 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_star_dust": {
+      "conditions": {
+        "items": [
+          {
+            "items": "allunderheaven:star_dust"
+          }
+        ]
+      },
+      "trigger": "minecraft:inventory_changed"
+    },
+    "has_the_recipe": {
+      "conditions": {
+        "recipe": "minecraft:star_forged_steel_from_blasting"
+      },
+      "trigger": "minecraft:recipe_unlocked"
+    }
+  },
+  "requirements": [
+    [
+      "has_the_recipe",
+      "has_star_dust"
+    ]
+  ],
+  "rewards": {
+    "recipes": [
+      "minecraft:star_forged_steel_from_blasting"
+    ]
+  }
+}

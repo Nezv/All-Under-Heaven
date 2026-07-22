@@ -11,7 +11,12 @@ import net.minecraft.data.recipes.RecipeOutput;
 import net.minecraft.data.recipes.RecipeProvider;
 import net.minecraft.data.recipes.ShapedRecipeBuilder;
 import net.minecraft.data.recipes.ShapelessRecipeBuilder;
+import net.minecraft.data.recipes.SimpleCookingRecipeBuilder;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.crafting.CookingBookCategory;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.neoforged.neoforge.registries.DeferredItem;
 
 /**
  * Crafting recipes. Add new recipes in {@link #buildRecipes()}; the nested
@@ -38,6 +43,60 @@ public class ModRecipeProvider extends RecipeProvider {
                 .requires(Items.GOLD_INGOT)
                 .unlockedBy("has_jade_block", this.has(ModBlocks.JADE_BLOCK.get()))
                 .save(this.output);
+
+        // --- star dust -> star-forged steel: the "usual forge" is the furnace
+        Ingredient dust = Ingredient.of(ModItems.STAR_DUST);
+        SimpleCookingRecipeBuilder.blasting(dust, RecipeCategory.MISC, CookingBookCategory.MISC,
+                        ModItems.STAR_FORGED_STEEL.get(), 0.8F, 100)
+                .unlockedBy("has_star_dust", this.has(ModItems.STAR_DUST))
+                .save(this.output, "star_forged_steel_from_blasting");
+        SimpleCookingRecipeBuilder.smelting(dust, RecipeCategory.MISC, CookingBookCategory.MISC,
+                        ModItems.STAR_FORGED_STEEL.get(), 0.8F, 200)
+                .unlockedBy("has_star_dust", this.has(ModItems.STAR_DUST))
+                .save(this.output, "star_forged_steel_from_smelting");
+
+        // --- the two equipment kits (Dragon-lord steel itself comes from the
+        // Dragon-lord Forge; its gear crafts once you have the ingots)
+        kit(ModItems.STAR_FORGED_STEEL,
+                ModItems.STAR_FORGED_SWORD, ModItems.STAR_FORGED_PICKAXE, ModItems.STAR_FORGED_AXE,
+                ModItems.STAR_FORGED_SHOVEL, ModItems.STAR_FORGED_HOE, ModItems.STAR_FORGED_HELMET,
+                ModItems.STAR_FORGED_CHESTPLATE, ModItems.STAR_FORGED_LEGGINGS, ModItems.STAR_FORGED_BOOTS);
+        kit(ModItems.DRAGONLORD_STEEL,
+                ModItems.DRAGONLORD_SWORD, ModItems.DRAGONLORD_PICKAXE, ModItems.DRAGONLORD_AXE,
+                ModItems.DRAGONLORD_SHOVEL, ModItems.DRAGONLORD_HOE, ModItems.DRAGONLORD_HELMET,
+                ModItems.DRAGONLORD_CHESTPLATE, ModItems.DRAGONLORD_LEGGINGS, ModItems.DRAGONLORD_BOOTS);
+    }
+
+    /** Standard tool/armour crafting patterns for one metal ingot {@code m}. */
+    private void kit(DeferredItem<Item> m, DeferredItem<Item> sword, DeferredItem<Item> pick,
+            DeferredItem<Item> axe, DeferredItem<Item> shovel, DeferredItem<Item> hoe,
+            DeferredItem<Item> helmet, DeferredItem<Item> chest, DeferredItem<Item> legs,
+            DeferredItem<Item> boots) {
+        String unlock = "has_" + m.getId().getPath();
+        shape(sword, m, "M", "M", "S");
+        shape(pick, m, "MMM", " S ", " S ");
+        shape(axe, m, "MM", "MS", " S");
+        shape(shovel, m, "M", "S", "S");
+        shape(hoe, m, "MM", " S", " S");
+        shape(helmet, m, "MMM", "M M");
+        shape(chest, m, "M M", "MMM", "MMM");
+        shape(legs, m, "MMM", "M M", "M M");
+        shape(boots, m, "M M", "M M");
+    }
+
+    private void shape(DeferredItem<Item> result, DeferredItem<Item> metal, String... rows) {
+        ShapedRecipeBuilder b = ShapedRecipeBuilder.shaped(this.items, RecipeCategory.COMBAT, result.get())
+                .define('M', metal.get())
+                .unlockedBy("has_" + metal.getId().getPath(), this.has(metal.get()));
+        boolean usesStick = false;
+        for (String row : rows) {
+            b.pattern(row);
+            usesStick |= row.indexOf('S') >= 0;
+        }
+        if (usesStick) {
+            b.define('S', Items.STICK);
+        }
+        b.save(this.output);
     }
 
     public static class Runner extends RecipeProvider.Runner {

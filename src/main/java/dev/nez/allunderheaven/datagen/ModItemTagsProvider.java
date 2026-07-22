@@ -3,6 +3,8 @@ package dev.nez.allunderheaven.datagen;
 import java.util.concurrent.CompletableFuture;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.registry.ModItems;
+import dev.nez.allunderheaven.registry.ModMaterials;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.data.PackOutput;
 import net.minecraft.data.tags.TagsProvider;
@@ -22,6 +24,8 @@ public class ModItemTagsProvider extends BlockTagCopyingItemTagProvider {
 
     @Override
     protected void addTags(HolderLookup.Provider lookupProvider) {
-        // Nothing yet — example: this.copy(BlockTags.SLABS, ItemTags.SLABS);
+        // repair-ingredient tags for the two mod materials
+        this.tag(ModMaterials.STAR_FORGED_INGOTS).add(ModItems.STAR_FORGED_STEEL.getKey());
+        this.tag(ModMaterials.DRAGONLORD_INGOTS).add(ModItems.DRAGONLORD_STEEL.getKey());
     }
 }

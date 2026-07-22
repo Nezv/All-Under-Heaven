@@ -3,6 +3,7 @@ package dev.nez.allunderheaven.datagen;
 import java.util.Set;
 
 import dev.nez.allunderheaven.registry.ModBlocks;
+import dev.nez.allunderheaven.registry.ModItems;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.data.loot.BlockLootSubProvider;
 import net.minecraft.world.flag.FeatureFlags;
@@ -27,5 +28,8 @@ public class ModBlockLootProvider extends BlockLootSubProvider {
     @Override
     protected void generate() {
         this.dropSelf(ModBlocks.JADE_BLOCK.get());
+        // stardust ore yields the dust (fortune-affected, correct-tool gated)
+        this.add(ModBlocks.STARDUST_ORE.get(),
+                this.createOreDrop(ModBlocks.STARDUST_ORE.get(), ModItems.STAR_DUST.get()));
     }
 }

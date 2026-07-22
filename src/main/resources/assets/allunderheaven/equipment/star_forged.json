@@ -1,0 +1,10 @@
+{
+  "layers": {
+    "humanoid": [
+      { "texture": "allunderheaven:star_forged" }
+    ],
+    "humanoid_leggings": [
+      { "texture": "allunderheaven:star_forged" }
+    ]
+  }
+}

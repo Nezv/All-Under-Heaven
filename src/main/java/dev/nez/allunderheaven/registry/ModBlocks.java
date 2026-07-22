@@ -21,6 +21,16 @@ public final class ModBlocks {
                     .requiresCorrectToolForDrops()
                     .sound(SoundType.STONE));
 
+    /** Star metal embedded in the fallen-star slag — drops star dust, and only
+     *  a diamond-tier pickaxe releases it (mineable + needs-diamond tags in
+     *  datagen). Faintly light-emitting, like a cooling meteor. */
+    public static final DeferredBlock<Block> STARDUST_ORE = BLOCKS.registerSimpleBlock("stardust_ore",
+            p -> p.mapColor(MapColor.COLOR_BLACK)
+                    .strength(4.5f, 9.0f)
+                    .requiresCorrectToolForDrops()
+                    .lightLevel(s -> 4)
+                    .sound(SoundType.DEEPSLATE));
+
     private ModBlocks() {
     }
 }

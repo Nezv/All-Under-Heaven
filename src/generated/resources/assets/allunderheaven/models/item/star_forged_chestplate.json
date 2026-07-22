@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "allunderheaven:item/star_forged_chestplate"
+  }
+}

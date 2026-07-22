@@ -1,0 +1,51 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "entries": [
+        {
+          "type": "minecraft:alternatives",
+          "children": [
+            {
+              "type": "minecraft:item",
+              "conditions": [
+                {
+                  "condition": "minecraft:match_tool",
+                  "predicate": {
+                    "predicates": {
+                      "minecraft:enchantments": [
+                        {
+                          "enchantments": "minecraft:silk_touch",
+                          "levels": {
+                            "min": 1
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "name": "allunderheaven:stardust_ore"
+            },
+            {
+              "type": "minecraft:item",
+              "functions": [
+                {
+                  "enchantment": "minecraft:fortune",
+                  "formula": "minecraft:ore_drops",
+                  "function": "minecraft:apply_bonus"
+                },
+                {
+                  "function": "minecraft:explosion_decay"
+                }
+              ],
+              "name": "allunderheaven:star_dust"
+            }
+          ]
+        }
+      ],
+      "rolls": 1.0
+    }
+  ],
+  "random_sequence": "allunderheaven:blocks/stardust_ore"
+}
