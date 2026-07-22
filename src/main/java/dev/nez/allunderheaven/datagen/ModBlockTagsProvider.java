@@ -21,9 +21,11 @@ public class ModBlockTagsProvider extends BlockTagsProvider {
     protected void addTags(HolderLookup.Provider lookupProvider) {
         this.tag(BlockTags.MINEABLE_WITH_PICKAXE)
                 .add(ModBlocks.JADE_BLOCK.getKey())
-                .add(ModBlocks.STARDUST_ORE.getKey());
+                .add(ModBlocks.STARDUST_ORE.getKey())
+                .add(ModBlocks.DRAGONLORD_FORGE.getKey());
         this.tag(BlockTags.NEEDS_IRON_TOOL)
-                .add(ModBlocks.JADE_BLOCK.getKey());
+                .add(ModBlocks.JADE_BLOCK.getKey())
+                .add(ModBlocks.DRAGONLORD_FORGE.getKey());
         this.tag(BlockTags.NEEDS_DIAMOND_TOOL)
                 .add(ModBlocks.STARDUST_ORE.getKey());
     }

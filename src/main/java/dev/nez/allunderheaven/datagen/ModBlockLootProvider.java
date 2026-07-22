@@ -28,6 +28,7 @@ public class ModBlockLootProvider extends BlockLootSubProvider {
     @Override
     protected void generate() {
         this.dropSelf(ModBlocks.JADE_BLOCK.get());
+        this.dropSelf(ModBlocks.DRAGONLORD_FORGE.get());
         // stardust ore yields the dust (fortune-affected, correct-tool gated)
         this.add(ModBlocks.STARDUST_ORE.get(),
                 this.createOreDrop(ModBlocks.STARDUST_ORE.get(), ModItems.STAR_DUST.get()));

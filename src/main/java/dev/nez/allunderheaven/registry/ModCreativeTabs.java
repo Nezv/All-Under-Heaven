@@ -31,6 +31,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.STAR_FORGED_STEEL.get());
                         output.accept(ModItems.DRAGON_BLOOD.get());
                         output.accept(ModItems.DRAGONLORD_STEEL.get());
+                        output.accept(ModItems.DRAGONLORD_FORGE_ITEM.get());
                         // star-forged kit
                         output.accept(ModItems.STAR_FORGED_SWORD.get());
                         output.accept(ModItems.STAR_FORGED_PICKAXE.get());

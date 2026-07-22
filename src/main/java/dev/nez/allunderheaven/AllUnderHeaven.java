@@ -4,11 +4,13 @@ import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
 
+import dev.nez.allunderheaven.registry.ModBlockEntities;
 import dev.nez.allunderheaven.registry.ModBlocks;
 import dev.nez.allunderheaven.registry.ModCreativeTabs;
 import dev.nez.allunderheaven.registry.ModEntities;
 import dev.nez.allunderheaven.registry.ModFeatures;
 import dev.nez.allunderheaven.registry.ModItems;
+import dev.nez.allunderheaven.registry.ModMenus;
 import dev.nez.allunderheaven.registry.ModParticles;
 import dev.nez.allunderheaven.registry.ModSounds;
 import dev.nez.allunderheaven.registry.ModStructures;
@@ -35,6 +37,8 @@ public class AllUnderHeaven {
         ModCreativeTabs.CREATIVE_MODE_TABS.register(modEventBus);
         ModFeatures.FEATURES.register(modEventBus);
         ModEntities.ENTITY_TYPES.register(modEventBus);
+        ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
+        ModMenus.MENUS.register(modEventBus);
         ModParticles.PARTICLE_TYPES.register(modEventBus);
         ModStructures.STRUCTURE_TYPES.register(modEventBus);
         ModStructures.STRUCTURE_PIECES.register(modEventBus);

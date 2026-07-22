@@ -64,6 +64,10 @@ public final class ModItems {
     public static final DeferredItem<BlockItem> STARDUST_ORE_ITEM =
             ITEMS.registerSimpleBlockItem("stardust_ore", ModBlocks.STARDUST_ORE);
 
+    /** Block item for the Dragon-lord Forge. */
+    public static final DeferredItem<BlockItem> DRAGONLORD_FORGE_ITEM =
+            ITEMS.registerSimpleBlockItem("dragonlord_forge", ModBlocks.DRAGONLORD_FORGE);
+
     // ------------------------------------------------------- star-forged kit
 
     public static final DeferredItem<Item> STAR_FORGED_SWORD =

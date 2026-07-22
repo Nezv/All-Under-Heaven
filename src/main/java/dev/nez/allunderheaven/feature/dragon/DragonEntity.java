@@ -303,6 +303,20 @@ public class DragonEntity extends PathfinderMob implements GeoEntity, NeutralMob
         this.playSound(ModSounds.DRAGON_STEP.get(), 0.6F, 0.9F + this.random.nextFloat() * 0.2F);
     }
 
+    /** A felled dragon bleeds — its blood fuels the Dragon-lord Forge — and
+     *  sheds the star grit fused into its hide. */
+    @Override
+    protected void dropCustomDeathLoot(net.minecraft.server.level.ServerLevel level,
+            DamageSource source, boolean killedByPlayer) {
+        super.dropCustomDeathLoot(level, source, killedByPlayer);
+        int blood = 2 + this.random.nextInt(3);              // 2..4 phials
+        this.spawnAtLocation(level,
+                new net.minecraft.world.item.ItemStack(dev.nez.allunderheaven.registry.ModItems.DRAGON_BLOOD.get(), blood));
+        int dust = 1 + this.random.nextInt(3);               // 1..3 star dust
+        this.spawnAtLocation(level,
+                new net.minecraft.world.item.ItemStack(dev.nez.allunderheaven.registry.ModItems.STAR_DUST.get(), dust));
+    }
+
     // ------------------------------------------------------------ GeckoLib
 
     @Override

@@ -65,6 +65,17 @@ public class ModRecipeProvider extends RecipeProvider {
                 ModItems.DRAGONLORD_SWORD, ModItems.DRAGONLORD_PICKAXE, ModItems.DRAGONLORD_AXE,
                 ModItems.DRAGONLORD_SHOVEL, ModItems.DRAGONLORD_HOE, ModItems.DRAGONLORD_HELMET,
                 ModItems.DRAGONLORD_CHESTPLATE, ModItems.DRAGONLORD_LEGGINGS, ModItems.DRAGONLORD_BOOTS);
+
+        // the Dragon-lord Forge: a star-forged frame around a magma heart
+        ShapedRecipeBuilder.shaped(this.items, RecipeCategory.MISC, ModBlocks.DRAGONLORD_FORGE.get())
+                .pattern("BSB")
+                .pattern("SMS")
+                .pattern("BSB")
+                .define('B', Items.BLACKSTONE)
+                .define('S', ModItems.STAR_FORGED_STEEL.get())
+                .define('M', Items.MAGMA_BLOCK)
+                .unlockedBy("has_star_forged_steel", this.has(ModItems.STAR_FORGED_STEEL.get()))
+                .save(this.output);
     }
 
     /** Standard tool/armour crafting patterns for one metal ingot {@code m}. */

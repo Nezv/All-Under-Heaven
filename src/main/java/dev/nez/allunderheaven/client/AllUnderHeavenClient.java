@@ -4,7 +4,9 @@ import dev.nez.allunderheaven.AllUnderHeaven;
 import dev.nez.allunderheaven.client.dragon.DragonFlameParticle;
 import dev.nez.allunderheaven.client.dragon.DragonRenderer;
 import dev.nez.allunderheaven.client.dragon.pose.DragonRig;
+import dev.nez.allunderheaven.client.dragonforge.DragonlordForgeScreen;
 import dev.nez.allunderheaven.registry.ModEntities;
+import dev.nez.allunderheaven.registry.ModMenus;
 import dev.nez.allunderheaven.registry.ModParticles;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.neoforged.api.distmarker.Dist;
@@ -15,6 +17,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
@@ -44,6 +47,11 @@ public class AllUnderHeavenClient {
     @SubscribeEvent
     static void onRegisterParticles(RegisterParticleProvidersEvent event) {
         event.registerSpriteSet(ModParticles.DRAGON_FLAME.get(), DragonFlameParticle.Provider::new);
+    }
+
+    @SubscribeEvent
+    static void onRegisterScreens(RegisterMenuScreensEvent event) {
+        event.register(ModMenus.DRAGONLORD_FORGE.get(), DragonlordForgeScreen::new);
     }
 
     @SubscribeEvent

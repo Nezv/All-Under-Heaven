@@ -1,8 +1,10 @@
 package dev.nez.allunderheaven.registry;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.feature.dragonforge.DragonlordForgeBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredRegister;
@@ -30,6 +32,17 @@ public final class ModBlocks {
                     .requiresCorrectToolForDrops()
                     .lightLevel(s -> 4)
                     .sound(SoundType.DEEPSLATE));
+
+    /** The Dragon-lord Forge — reworks star-forged steel on dragon blood.
+     *  Glows while lit; the Dragon Keeper's job-site block. */
+    public static final DeferredBlock<DragonlordForgeBlock> DRAGONLORD_FORGE =
+            BLOCKS.registerBlock("dragonlord_forge", DragonlordForgeBlock::new,
+                    () -> BlockBehaviour.Properties.of()
+                            .mapColor(MapColor.COLOR_BLACK)
+                            .strength(4.0f, 6.0f)
+                            .requiresCorrectToolForDrops()
+                            .lightLevel(s -> s.getValue(DragonlordForgeBlock.LIT) ? 13 : 0)
+                            .sound(SoundType.NETHERITE_BLOCK));
 
     private ModBlocks() {
     }

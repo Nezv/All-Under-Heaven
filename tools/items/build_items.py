@@ -326,6 +326,145 @@ def build_armor_layer(tier, pal):
         img.save(os.path.join(folder, f"{tier}.png"))
 
 
+GUI_DIR = os.path.join(RES, "textures", "gui", "container")
+os.makedirs(GUI_DIR, exist_ok=True)
+
+BLACKSTONE = (46, 40, 48)
+CRIMSON = (168, 42, 36)
+EMBER = (255, 132, 52)
+GOLD = (240, 205, 90)
+
+
+def _noise(d, w, h, base, rng, lo=0.80, hi=1.10, x0=0, y0=0):
+    for y in range(h):
+        for x in range(w):
+            d.point((x0 + x, y0 + y), fill=_shade(base, rng.uniform(lo, hi)))
+
+
+def _maw(d, frame, frames, lit):
+    """The dragon-mouth furnace opening: an arched maw with fang teeth. When
+    lit it roars with animated crimson->ember->gold fire."""
+    rng = random.Random(100 + frame)
+    for x in range(4, 12):                              # arched cavity
+        top = 5 + (0 if 6 <= x <= 9 else 1)
+        for y in range(top, 14):
+            if lit:
+                t = (y - top) / 8.0                     # bottom = hotter
+                flick = rng.random()
+                if flick < 0.12 + 0.5 * t:
+                    col = EMBER if flick < 0.3 else (255, 210, 90)
+                elif flick < 0.4 + 0.4 * t:
+                    col = CRIMSON
+                else:
+                    col = (70, 14, 16)
+                d.point((x, y), fill=(*col, 255))
+            else:
+                d.point((x, y), fill=(20, 12, 14, 255))
+                if rng.random() < 0.10:
+                    d.point((x, y), fill=(90, 26, 22, 255))
+    for fx in (5, 7, 9, 11):                            # fang teeth on the lip
+        d.point((fx, 5 if 6 <= fx <= 9 else 6), fill=(210, 205, 198, 255))
+        d.point((fx, 13), fill=(210, 205, 198, 255))
+    for (rx, ry) in ((3, 4), (12, 4), (3, 13), (12, 13)):   # crimson bolts
+        d.point((rx, ry), fill=(*CRIMSON, 255))
+
+
+def build_forge_block():
+    rng = random.Random(11)
+    # side: blackstone with a crimson seam and hot bolts
+    img = Image.new("RGBA", (16, 16), TRANSPARENT)
+    d = ImageDraw.Draw(img)
+    _noise(d, 16, 16, BLACKSTONE, rng)
+    for x in range(16):
+        d.point((x, 7), fill=_shade(BLACKSTONE, 0.6))
+        d.point((x, 8), fill=(*CRIMSON, 255) if x % 4 == 0 else _shade(BLACKSTONE, 1.25))
+    for (rx, ry) in ((2, 2), (13, 2), (2, 13), (13, 13)):
+        d.point((rx, ry), fill=(*EMBER, 255))
+    img.save(os.path.join(BLOCK_DIR, "dragonlord_forge_side.png"))
+    # top: cracked blackstone with a glowing crimson rune ring
+    img = Image.new("RGBA", (16, 16), TRANSPARENT)
+    d = ImageDraw.Draw(img)
+    _noise(d, 16, 16, BLACKSTONE, rng)
+    d.ellipse([3, 3, 12, 12], outline=(*CRIMSON, 255))
+    d.ellipse([5, 5, 10, 10], outline=(*EMBER, 255))
+    for a in range(0, 360, 45):
+        px = 7.5 + 4.5 * math.cos(math.radians(a))
+        py = 7.5 + 4.5 * math.sin(math.radians(a))
+        d.point((int(px), int(py)), fill=(*GOLD, 255))
+    img.save(os.path.join(BLOCK_DIR, "dragonlord_forge_top.png"))
+    # front unlit
+    img = Image.new("RGBA", (16, 16), TRANSPARENT)
+    d = ImageDraw.Draw(img)
+    _noise(d, 16, 16, BLACKSTONE, rng)
+    _maw(d, 0, 1, lit=False)
+    img.save(os.path.join(BLOCK_DIR, "dragonlord_forge_front.png"))
+    # front lit: animated fire strip
+    frames = 8
+    strip = Image.new("RGBA", (16, 16 * frames), TRANSPARENT)
+    for f in range(frames):
+        fr = Image.new("RGBA", (16, 16), TRANSPARENT)
+        fd = ImageDraw.Draw(fr)
+        _noise(fd, 16, 16, BLACKSTONE, random.Random(11))
+        _maw(fd, f, frames, lit=True)
+        strip.paste(fr, (0, 16 * f))
+    strip.save(os.path.join(BLOCK_DIR, "dragonlord_forge_front_on.png"))
+    with open(os.path.join(BLOCK_DIR, "dragonlord_forge_front_on.png.mcmeta"), "w") as fh:
+        fh.write('{\n "animation": {\n  "frametime": 4\n }\n}\n')
+
+
+def build_gui():
+    """176x166 forge panel in a 256x256 sheet, with full flame (176,0) and
+    full arrow (176,14) sprites for the screen to blit partially."""
+    img = Image.new("RGBA", (256, 256), TRANSPARENT)
+    d = ImageDraw.Draw(img)
+    panel = (58, 52, 60)
+    rng = random.Random(21)
+    _noise(d, 176, 166, panel, rng, 0.94, 1.06)
+    d.rectangle([0, 0, 175, 165], outline=_shade(CRIMSON, 0.8))
+    d.rectangle([1, 1, 174, 164], outline=_shade(panel, 1.2))
+
+    def slot(sx, sy, accent=None):
+        d.rectangle([sx, sy, sx + 17, sy + 17], fill=_shade(panel, 0.7))
+        d.rectangle([sx, sy, sx + 17, sy + 17], outline=_shade(panel, 0.5))
+        d.rectangle([sx + 1, sy + 1, sx + 16, sy + 16], fill=_shade(panel, 0.55))
+        if accent:
+            d.rectangle([sx, sy, sx + 17, sy + 17], outline=(*accent, 255))
+
+    slot(55, 16, CRIMSON)        # input (star-forged steel)
+    slot(55, 52, (150, 20, 24))  # fuel (dragon blood)
+    slot(115, 34, EMBER)         # output (dragon-lord steel)
+    # arrow groove
+    for x in range(79, 103):
+        d.point((x, 41), fill=_shade(panel, 0.5))
+        d.point((x, 42), fill=_shade(panel, 0.5))
+    # flame recess under the fuel slot
+    d.rectangle([56, 36, 69, 49], fill=(24, 14, 14, 255))
+    # player inventory + hotbar slots
+    for row in range(3):
+        for col in range(9):
+            slot(7 + col * 18, 83 + row * 18)
+    for col in range(9):
+        slot(7 + col * 18, 141)
+    # --- sprites the screen blits partially ---
+    # full flame at (176,0) 14x14
+    fr = random.Random(7)
+    for x in range(14):
+        for y in range(14):
+            t = 1 - y / 13.0
+            if fr.random() < 0.25 + 0.6 * t:
+                col = (255, 210, 90) if t > 0.6 else (EMBER if t > 0.3 else CRIMSON)
+                d.point((176 + x, y), fill=(*col, 255))
+    # full arrow at (176,14) 24x17 (crimson->ember)
+    for x in range(24):
+        for y in range(17):
+            body = (5 <= y <= 11 and x <= 16) or (abs(y - 8) <= (17 - x) and x > 16 and x <= 23)
+            if body:
+                t = x / 23.0
+                col = tuple(int(CRIMSON[i] + (EMBER[i] - CRIMSON[i]) * t) for i in range(3))
+                d.point((176 + x, 14 + y), fill=(*col, 255))
+    img.save(os.path.join(GUI_DIR, "dragonlord_forge.png"))
+
+
 def build_preview(previews):
     cols = 10
     rows = (len(previews) + cols - 1) // cols
@@ -344,6 +483,6 @@ if __name__ == "__main__":
             previews.append((f"{tier}_{part}", save_item(f"{tier}_{part}", fn(), pal)))
         build_armor_layer(tier, pal)
     previews.append(("star_dust", save_item("star_dust", dust(), STAR)))
-    build_ore(); build_blood()
+    build_ore(); build_blood(); build_forge_block(); build_gui()
     build_preview(previews)
     print("wrote item/block/armour textures into", RES)

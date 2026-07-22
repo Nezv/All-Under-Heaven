@@ -7,6 +7,7 @@ import net.minecraft.client.data.models.BlockModelGenerators;
 import net.minecraft.client.data.models.ItemModelGenerators;
 import net.minecraft.client.data.models.ModelProvider;
 import net.minecraft.client.data.models.model.ModelTemplates;
+import net.minecraft.client.data.models.model.TexturedModel;
 import net.minecraft.data.PackOutput;
 import net.minecraft.world.item.Item;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -26,6 +27,9 @@ public class ModModelProvider extends ModelProvider {
     protected void registerModels(BlockModelGenerators blockModels, ItemModelGenerators itemModels) {
         blockModels.createTrivialCube(ModBlocks.JADE_BLOCK.get());
         blockModels.createTrivialCube(ModBlocks.STARDUST_ORE.get());
+        // furnace-style: FACING + LIT blockstate, lit/unlit models + item model,
+        // from _top/_side/_front/_front_on textures
+        blockModels.createFurnace(ModBlocks.DRAGONLORD_FORGE.get(), TexturedModel.ORIENTABLE_ONLY_TOP);
 
         itemModels.generateFlatItem(ModItems.JADE_SEAL.get(), ModelTemplates.FLAT_ITEM);
         itemModels.generateFlatItem(ModItems.DRAGON_SPAWN_EGG.get(), ModelTemplates.FLAT_ITEM);
