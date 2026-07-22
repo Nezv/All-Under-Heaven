@@ -807,7 +807,15 @@ def _smoothstep(a, b, t):
     return u * u * (3 - 2 * u)
 
 
-EDGE_YAW = -14.0  # finger 1 total local yaw: continues the leading edge
+# Folded-wing finger fan, total local yaw per finger (front -> back), from
+# Bruno's annotated reference: the HAND plants on the ground like a bat's and
+# every finger radiates UP-BACK from that ground point - the front spar
+# standing steepest, each one behind reclining further - so the folded wing
+# reads as the zigzag skyline of standing knuckle peaks, membrane draped
+# between. (-90 = horizontal-back in the planted hand's frame; toward -180
+# rises to vertical.)
+FAN_FRONT = -166.0
+FAN_BACK = -118.0
 
 
 def _solve_hind(pose_base, thigh, shin0, foot0, target_y=0.4):  # -> (thigh, shin, foot)
@@ -855,35 +863,29 @@ def _solve_hind(pose_base, thigh, shin0, foot0, target_y=0.4):  # -> (thigh, shi
     return thigh + c[0], shin0 + c[1], foot0 + c[2]
 
 
-def _solve_plant(pose_base, v, fore_yaw=22.0, pad=1.5):
-    """The reference wing tent (Bruno's red lines on the GoT beach still):
-    the humerus rises to the HIGHEST apex from which the leading edge can
-    still descend and plant on the ground - a tall inverted V each side.
-    The descending edge is the forearm CONTINUED by the leading finger's
-    first spar (the fan pitches finger 1 almost straight down the forearm
-    line), so the ground contact is the finger-1 knuckle pad, out wide and
-    forward of the chest exactly like the reference.
+def _solve_plant(pose_base, v, fore_yaw=22.0, pad=8.0):
+    """The bat plant (Bruno's annotated reference): the HAND itself rests on
+    the ground - shoulder to a modest elbow apex, forearm descending all the
+    way down - and the fingers then stand up-back from that ground point as
+    the tall knuckle-peak skyline. Ground contact = the carpal knuckle, so
+    the solve targets the HAND, not any finger.
 
     Two nested solves over the left wing (mirror with *sx per side):
       outer - arm Z-roll: bisected to the LARGEST apex angle from which the
-              WRIST still reaches its target height (pad + the drop that
-              finger 1 adds below the wrist);
+              forearm still lands the hand at pad height (short red wings
+              settle near-horizontal humerus; the black's huge wings keep a
+              grand apex naturally);
       inner - forearm Z: chosen on the shallow side of its lowest-reach
               swing so the edge leans out/forward, not under the chest.
     Returns (arm_z, fore_z) rotation deltas."""
     by = {b.name: b for b in BONES}
-    # ground contact = the finger-1 knuckle: FK the finger1a tip (= the
-    # finger1b pivot, rigid under finger1) with finger 1 pitched onto the
-    # leading-edge line, so the solve needs no drop estimate at all.
-    tip_a = by["wing_l_finger1b"].pivot
-    yaw1 = v.fingers[0][0]
+    hand = by["wing_l_hand"]
 
     def contact_y(arm_z, fore_z):
         pose = dict(pose_base)
         pose["wing_l_arm"] = {"rotation": (0.0, -10.0, arm_z)}
         pose["wing_l_fore"] = {"rotation": (0.0, fore_yaw, fore_z)}
-        pose["wing_l_finger1"] = {"rotation": (0.0, EDGE_YAW + yaw1, 0.0)}
-        return bone_world_transform(pose)["wing_l_finger1"](tip_a)[1]
+        return bone_world_transform(pose)[hand.parent](hand.pivot)[1]
 
     target_y = pad
 
@@ -1000,19 +1002,15 @@ def _ground_stance(v: Variant):
     for side, sx in (("l", 1), ("r", -1)):
         st[f"wing_{side}_arm"] = {"rotation": (0, -10 * sx, arm_z * sx)}
         st[f"wing_{side}_fore"] = {"rotation": (0, 22 * sx, fore_z * sx)}
-        # reference tent: finger 1 CONTINUES the descending leading edge to
-        # the ground (its knuckle pad is the actual contact _solve_plant
-        # lands), its tip segment kinks back off the pad; the remaining
-        # fingers sweep progressively back-up from the contact, carrying
-        # the membrane as the tent wall behind the leading edge.
+        # bat plant: with the hand ON the ground, every finger radiates
+        # UP-BACK from the contact - the front spar steepest, each one
+        # behind reclining further (FAN_FRONT -> FAN_BACK), tip segments
+        # leaning on a touch more - the standing knuckle-peak skyline of
+        # the reference, membrane strips draped between the spars.
         for fi, (yaw_rest, _fl) in enumerate(v.fingers, 1):
             t_f = (fi - 1) / max(1, n_f - 1)
-            if fi == 1:
-                target = EDGE_YAW           # ride the leading edge down
-                b_yaw = -26.0               # tip kinks back past the pad
-            else:
-                target = -(58.0 + 72.0 * t_f)   # membrane fan: back -> folded
-                b_yaw = -(34.0 - 8.0 * t_f)
+            target = FAN_FRONT + (FAN_BACK - FAN_FRONT) * t_f
+            b_yaw = -(16.0 - 6.0 * t_f)
             st[f"wing_{side}_finger{fi}"] = {
                 "rotation": (0, (target + yaw_rest) * sx, 0)}
             st[f"wing_{side}_finger{fi}b"] = {
