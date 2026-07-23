@@ -1,9 +1,15 @@
 """Procedural item/block/armour textures for the Star-forged & Dragon-lord
-tiers. Deterministic pixel art:
+tiers. Deterministic pixel art with a medieval / Game-of-Thrones bent:
 
-  Star-forged  = dark grey steel with cold blue tempering flecks (static).
-  Dragon-lord  = lighter grey steel with crimson + ember flecks that FLICKER
-                 (animated .png strip + .mcmeta), for the fire-forged look.
+  Star-forged  = dark Valyrian-style steel, cold blue temper down the fuller,
+                 brown leather-wrapped grips and dark-bronze furniture (STATIC).
+  Dragon-lord  = brighter steel run through with fervent crimson blood that
+                 FLOWS along the metal (8-frame animated .png strip + .mcmeta),
+                 embers riding the veins — the fire-forged, blood-quenched look.
+
+The blade/tool/plate silhouettes are drawn as real shapes (broad fullered
+blades, crossguards, pommels, plate cuirasses) so they read correctly when the
+handheld/flat item model extrudes them to 3D.
 
 Run:  python build_items.py            (writes into the mod + a preview sheet)
 """
@@ -24,25 +30,41 @@ for d in (ITEM_DIR, BLOCK_DIR, EQUIP_H, EQUIP_L):
     os.makedirs(d, exist_ok=True)
 
 TRANSPARENT = (0, 0, 0, 0)
+FRAMES = 8            # animation length for the blood-forged tier
+FRAMETIME = 3        # ticks per frame
 
 
 class Palette:
-    def __init__(self, base, light, dark, outline, accent, spark, animated):
-        self.base = base
-        self.light = light
-        self.dark = dark
+    """Colours for one tier. Roles used by the silhouettes map onto these."""
+    def __init__(self, steel, light, dark, edge, leather, leather_d,
+                 metal, metal_d, accent, spark, outline, animated):
+        self.steel = steel          # blade / plate body
+        self.light = light          # lit bevel, top faces
+        self.dark = dark            # shaded edges, undersides
+        self.edge = edge            # bright cutting edge / rim highlight
+        self.leather = leather      # grip wrap / wooden haft
+        self.leather_d = leather_d  # grip shadow / wrap binding
+        self.metal = metal          # guard, pommel, rivets (bronze)
+        self.metal_d = metal_d
+        self.accent = accent        # tier colour: blue temper / crimson blood
+        self.spark = spark          # brightest accent: star glint / ember
         self.outline = outline
-        self.accent = accent      # the tier's colour bits (blue / crimson)
-        self.spark = spark        # brightest accent (star glint / ember)
         self.animated = animated
 
 
-STAR = Palette(base=(92, 99, 108), light=(146, 154, 165), dark=(52, 57, 66),
-               outline=(24, 26, 32), accent=(58, 120, 214), spark=(150, 200, 255),
-               animated=False)
-LORD = Palette(base=(156, 158, 162), light=(206, 208, 212), dark=(98, 100, 106),
-               outline=(30, 24, 26), accent=(196, 44, 40), spark=(255, 150, 54),
-               animated=True)
+STAR = Palette(
+    steel=(88, 96, 107), light=(140, 150, 163), dark=(46, 52, 62),
+    edge=(184, 196, 210), leather=(82, 56, 36), leather_d=(50, 34, 22),
+    metal=(122, 108, 74), metal_d=(78, 66, 44),
+    accent=(58, 120, 210), spark=(156, 208, 255),
+    outline=(19, 21, 27), animated=False)
+
+LORD = Palette(
+    steel=(150, 152, 159), light=(202, 204, 210), dark=(94, 96, 103),
+    edge=(226, 228, 233), leather=(58, 30, 30), leather_d=(38, 19, 20),
+    metal=(124, 74, 42), metal_d=(80, 46, 28),
+    accent=(190, 34, 32), spark=(255, 150, 46),
+    outline=(24, 16, 18), animated=True)
 
 
 def _shade(c, f):
@@ -50,162 +72,198 @@ def _shade(c, f):
             max(0, min(255, int(c[2] * f))), 255)
 
 
-# ---- silhouettes: each returns a 16x16 mask dict pos->role -----------------
-# roles: 'b' base, 'l' light, 'd' dark, 'h' haft, 'a' accent-slot (may spark)
+def _lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
-def _haft(mask, x0, y0, x1, y1, w=2):
+
+# ---- silhouettes -----------------------------------------------------------
+# Each returns a 16x16 mask dict pos -> role. Roles:
+#   's' steel  'l' light  'd' dark  'e' edge
+#   'g' grip/haft  'k' grip-shadow  'm' metal  'n' metal-dark
+#   'a' accent (tier colour, may flow)  'p' spark (bright glint)
+
+def _put(m, x, y, role):
+    if 0 <= x < 16 and 0 <= y < 16:
+        m[(x, y)] = role
+
+
+def _haft(m, x0, y0, x1, y1, w=2, role='g', shadow='k'):
+    """A straight haft/grip of given width, shaded on its trailing side."""
     steps = max(abs(x1 - x0), abs(y1 - y0))
     for s in range(steps + 1):
         u = s / max(1, steps)
         px = round(x0 + (x1 - x0) * u)
         py = round(y0 + (y1 - y0) * u)
-        for dx in range(w):
-            for dy in range(w):
-                mask[(px + dx, py + dy)] = 'h'
-
-
-def _blade(mask, x0, y0, x1, y1, w=3):
-    steps = max(abs(x1 - x0), abs(y1 - y0))
-    for s in range(steps + 1):
-        u = s / max(1, steps)
-        px = round(x0 + (x1 - x0) * u)
-        py = round(y0 + (y1 - y0) * u)
-        for dx in range(w):
-            for dy in range(w):
-                role = 'l' if dx == 0 else ('a' if (dx == w - 1 and s % 3 == 0) else 'b')
-                mask[(px + dx, py + dy)] = role
+        for i in range(w):
+            _put(m, px + i, py, shadow if i == w - 1 and w > 1 else role)
 
 
 def sword():
+    """A longsword drawn along the SW->NE diagonal (pommel in the lower-left so
+    the handheld model seats it in the fist): a 2-wide fullered blade with a
+    bright upper edge, upswept quillons, a wrapped grip and a disc pommel."""
     m = {}
-    _haft(m, 3, 12, 6, 9, 2)                 # grip
-    for x in range(4, 9):                    # guard
-        m[(x, 9)] = 'a' if x in (4, 8) else 'd'
-    _blade(m, 6, 8, 12, 2, 3)                # blade up-right
-    m[(13, 1)] = 'l'; m[(12, 1)] = 'a'
+    x0, y0, x1, y1 = 6, 9, 13, 2
+    steps = max(abs(x1 - x0), abs(y1 - y0))
+    for s in range(steps + 1):
+        u = s / steps
+        cx = round(x0 + (x1 - x0) * u)
+        cy = round(y0 + (y1 - y0) * u)
+        _put(m, cx, cy, 'e')                        # bright cutting edge
+        _put(m, cx + 1, cy + 1, 's')                # blade body / fuller side
+        if s in (2, 4):
+            _put(m, cx + 1, cy + 1, 'a')            # temper / blood in the fuller
+    _put(m, 13, 2, 'e'); _put(m, 12, 2, 'l')        # crisp point
+    for (gx, gy) in ((3, 9), (4, 10), (5, 10), (6, 10), (7, 9)):  # upswept quillons
+        _put(m, gx, gy, 'm')
+    _put(m, 3, 9, 'n'); _put(m, 7, 9, 'n')
+    for (gx, gy) in ((5, 11), (4, 12), (4, 13)):    # wrapped grip
+        _put(m, gx, gy, 'g')
+    _put(m, 4, 12, 'k')
+    for (px, py) in ((3, 14), (4, 14), (3, 13)):    # disc pommel
+        _put(m, px, py, 'm')
+    _put(m, 4, 14, 'p')
     return m
 
 
 def pickaxe():
     m = {}
-    _haft(m, 6, 13, 9, 4, 2)
-    for x in range(2, 14):                    # arched head
-        y = 3 + int(2.2 * (1 - math.sin(math.pi * (x - 2) / 11)))
-        m[(x, y)] = 'l' if x in (2, 13) else 'b'
-        m[(x, y + 1)] = 'a' if x in (4, 11) else 'd'
+    _haft(m, 8, 5, 4, 14, 2, 'g', 'k')              # haft to bottom-left
+    for x in range(2, 14):                          # arched twin-horn head
+        t = (x - 2) / 11.0
+        y = 5 - int(round(3.0 * math.sin(math.pi * t)))
+        _put(m, x, y, 'e' if x in (2, 13) else ('l' if x in (7, 8) else 's'))
+        _put(m, x, y + 1, 'a' if x in (5, 10) else ('d' if x in (3, 12) else 's'))
+    _put(m, 2, 5, 'e'); _put(m, 13, 5, 'e')
     return m
 
 
 def axe():
     m = {}
-    _haft(m, 7, 13, 9, 3, 2)
-    for x in range(3, 9):                     # blocky bit on the left
-        for y in range(2, 9):
-            if (x - 8) ** 2 * 0.5 + (y - 5) ** 2 * 0.4 < 8:
-                m[(x, y)] = 'b'
-    m[(3, 5)] = 'l'; m[(4, 3)] = 'a'; m[(4, 7)] = 'a'
+    _haft(m, 9, 3, 5, 14, 2, 'g', 'k')              # haft to bottom-left
+    for y in range(3, 10):                           # broad bit, arced cutting edge
+        left = 4 + (1 if y in (3, 9) else 0)
+        for x in range(left, 9):
+            role = 'e' if x == left else ('a' if x == 7 and y in (5, 7)
+                                          else ('l' if y == 6 else 's'))
+            _put(m, x, y, role)
+    for y in range(4, 9):                            # socket seam at the haft
+        _put(m, 8, y, 'n')
     return m
 
 
 def shovel():
     m = {}
-    _haft(m, 7, 12, 9, 5, 2)
-    for x in range(6, 11):                     # spade head
-        for y in range(3, 8):
-            if not (y == 7 and x in (6, 10)):
-                m[(x, y)] = 'b'
-    for x in range(6, 11):
-        m[(x, 3)] = 'l'
-    m[(8, 5)] = 'a'
+    _haft(m, 9, 6, 5, 14, 2, 'g', 'k')              # haft to bottom-left
+    for y in range(2, 8):                            # spade blade, top
+        halfw = 3 - max(0, y - 5)
+        for x in range(8 - halfw, 9 + halfw):
+            edge = x == 8 - halfw or x == 8 + halfw
+            _put(m, x, y, 'l' if y == 2 else ('e' if edge else 's'))
+    _put(m, 8, 5, 'a'); _put(m, 8, 4, 'a')
     return m
 
 
 def hoe():
     m = {}
-    _haft(m, 6, 13, 10, 3, 2)
-    for x in range(3, 11):                      # top bar
-        m[(x, 3)] = 'l' if x == 3 else 'b'
-        m[(x, 4)] = 'd'
-    for y in range(4, 7):                        # short down blade
-        m[(3, y)] = 'b'
-    m[(3, 6)] = 'a'; m[(9, 3)] = 'a'
+    _haft(m, 9, 4, 5, 14, 2, 'g', 'k')              # haft to bottom-left
+    for x in range(3, 10):                            # top head bar
+        _put(m, x, 2, 'l')
+        _put(m, x, 3, 's' if x else 's')
+    for y in range(2, 6):                             # short down-blade (left)
+        _put(m, 3, y, 'e' if y == 2 else 's')
+        _put(m, 4, y, 's')
+    _put(m, 3, 4, 'a'); _put(m, 8, 3, 'a')
     return m
 
 
 def helmet():
     m = {}
-    for x in range(3, 13):
-        for y in range(2, 10):
-            edge = x in (3, 12) or y == 2
-            if y >= 8 and 5 <= x <= 10:          # visor gap
+    for x in range(4, 12):                            # rounded great-helm dome
+        for y in range(2, 12):
+            if (x in (4, 11) and y in (2, 11)):       # clip corners
                 continue
-            m[(x, y)] = 'l' if (y == 2 or x == 3) else ('d' if edge else 'b')
-    m[(5, 5)] = 'a'; m[(10, 5)] = 'a'
+            edge = x in (4, 11) or y == 11
+            _put(m, x, y, 'l' if y == 2 else ('d' if edge else 's'))
+    for x in range(5, 11):                            # visor slit
+        _put(m, x, 6, 'n')
+    for y in range(4, 10):                            # central reinforce ridge
+        _put(m, 7, y, 'l'); _put(m, 8, y, 'd')
+    for x in range(4, 12):                            # brow trim accent
+        if x % 2 == 0:
+            _put(m, x, 3, 'a')
     return m
 
 
 def chestplate():
     m = {}
-    for x in range(3, 13):
-        for y in range(3, 13):
-            if (x in (3, 12) and y < 5):
-                continue
-            edge = x in (3, 12) or y in (3, 12)
-            m[(x, y)] = 'l' if y == 3 else ('d' if edge else 'b')
-    for y in range(5, 11):                        # sternum accent
-        m[(8, y)] = 'a' if y % 2 else 'd'
-    m[(4, 4)] = 'b'; m[(11, 4)] = 'b'
+    for x in (3, 4, 11, 12):                          # pauldrons
+        _put(m, x, 4, 'l'); _put(m, x, 5, 'd')
+    for x in range(4, 12):                            # cuirass body
+        for y in range(4, 14):
+            edge = x in (4, 11) or y == 13
+            _put(m, x, y, 'l' if y == 4 else ('d' if edge else 's'))
+    for y in range(5, 13):                            # sternum ridge
+        _put(m, 7, y, 'e'); _put(m, 8, y, 'd')
+    for x in range(5, 11):                            # collar + belt trim
+        if x % 2:
+            _put(m, x, 4, 'a')
+    for x in range(4, 12):
+        _put(m, x, 12, 'm' if x % 2 else 'n')
     return m
 
 
 def leggings():
     m = {}
-    for x in range(3, 13):
-        for y in range(2, 6):                     # belt
-            m[(x, y)] = 'l' if y == 2 else 'b'
-    for x in list(range(3, 7)) + list(range(9, 13)):   # two legs
-        for y in range(6, 14):
+    for x in range(3, 13):                            # belt
+        _put(m, x, 2, 'l'); _put(m, x, 3, 's'); _put(m, x, 4, 'm')
+    for x in list(range(3, 7)) + list(range(9, 13)):  # two cuisses
+        for y in range(5, 14):
             edge = x in (3, 6, 9, 12)
-            m[(x, y)] = 'd' if edge else 'b'
-    m[(5, 3)] = 'a'; m[(10, 3)] = 'a'
+            _put(m, x, y, 'd' if edge else 's')
+        _put(m, x, 5, 'l')
+    _put(m, 4, 8, 'a'); _put(m, 11, 8, 'a')           # knee studs
+    _put(m, 5, 4, 'a'); _put(m, 10, 4, 'a')
     return m
 
 
 def boots():
     m = {}
-    for x in list(range(3, 7)) + list(range(9, 13)):
-        for y in range(5, 10):
-            m[(x, y)] = 'b'
-        for x2 in range(x, x + 4):
-            m[(x2, 11)] = 'd'
-    for x in range(3, 13):
-        m[(x, 12)] = 'd'
-    m[(4, 6)] = 'l'; m[(10, 6)] = 'l'; m[(4, 8)] = 'a'; m[(10, 8)] = 'a'
+    for x in list(range(3, 7)) + list(range(9, 13)):  # two sabatons
+        for y in range(6, 12):
+            _put(m, x, y, 's')
+        _put(m, x, 6, 'l')
+    for x in range(3, 7):                              # soles
+        _put(m, x, 12, 'n')
+    for x in range(9, 13):
+        _put(m, x, 12, 'n')
+    for x in (3, 4, 5, 6):                             # pointed toe cap
+        _put(m, x, 7, 'e' if x == 3 else 's')
+    _put(m, 4, 9, 'a'); _put(m, 11, 9, 'a')           # ankle trim
     return m
 
 
 def ingot():
     m = {}
-    for x in range(2, 14):
+    for x in range(2, 14):                             # forged trapezoid bar
         for y in range(5, 11):
-            # trapezoid ingot
-            inset = 1 if (y in (5, 10)) else 0
+            inset = 1 if y in (5, 10) else 0
             if 2 + inset <= x <= 13 - inset:
-                top = y in (5,)
-                m[(x, y)] = 'l' if top else ('d' if y == 10 else 'b')
-    for (ax, ay) in ((5, 7), (8, 8), (11, 7)):
-        m[(ax, ay)] = 'a'
+                _put(m, x, y, 'l' if y == 5 else ('d' if y == 10 else 's'))
+    for (ax, ay) in ((5, 7), (8, 8), (11, 7)):         # veins / temper glints
+        _put(m, ax, ay, 'a')
+    _put(m, 4, 6, 'p')
     return m
 
 
 def dust():
     m = {}
     rng = random.Random(7)
-    for _ in range(46):
+    for _ in range(44):
         x, y = rng.randint(3, 12), rng.randint(4, 12)
-        m[(x, y)] = rng.choice(['b', 'b', 'd', 'a'])
-    for _ in range(6):
-        m[(rng.randint(4, 11), rng.randint(5, 11))] = 'a'
+        m[(x, y)] = rng.choice(['s', 's', 'd', 'a'])
+    for _ in range(7):
+        m[(rng.randint(4, 11), rng.randint(5, 11))] = 'p'
     return m
 
 
@@ -230,53 +288,92 @@ def _outline(img, pal):
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < w and 0 <= ny < h and px[nx, ny][3] != 0:
-                    op[x, y] = pal.outline + (255,)[:1] and (*pal.outline, 255)
+                    op[x, y] = (*pal.outline, 255)
                     break
     return out
 
 
-def render_frame(mask, pal, frame, frames):
+def _flow(x, y, frame):
+    """A travelling wave up the blade axis, 0..1, used for the blood glow."""
+    return 0.5 + 0.5 * math.sin(2.0 * math.pi * ((x - y) * 0.22 - frame / FRAMES))
+
+
+def _accent_colour(pal, x, y, frame):
+    """The tier accent. Star = static blue temper. Dragon-lord = crimson blood
+    that flows up the blade over the frames, embers riding the crest."""
+    if not pal.animated:
+        return pal.spark if (x + y) % 4 == 0 else pal.accent
+    glow = _flow(x, y, frame) ** 1.6              # mostly deep, briefly hot
+    return _lerp(pal.accent, pal.spark, glow)[:3]
+
+
+def _warm(pal, x, y, frame, col, amt):
+    """Bleed a faint travelling ember heat into the steel of the blood-forged
+    tier, so the whole piece pulses as if freshly quenched in dragon blood."""
+    return (*_lerp(col[:3], pal.spark, amt * _flow(x, y, frame)), 255)
+
+
+def render_frame(mask, pal, frame):
     img = Image.new("RGBA", (16, 16), TRANSPARENT)
     p = img.load()
-    rng = random.Random(1)
     for (x, y), role in mask.items():
         if not (0 <= x < 16 and 0 <= y < 16):
             continue
-        if role == 'b':
-            p[x, y] = _shade(pal.base, 1.0)
-        elif role == 'l':
-            p[x, y] = _shade(pal.light, 1.0)
-        elif role == 'd':
-            p[x, y] = _shade(pal.dark, 1.0)
-        elif role == 'h':
-            p[x, y] = _shade(pal.dark, 0.8)
-        elif role == 'a':
+        if role == 's':
+            col = _shade(pal.steel, 1.0)
             if pal.animated:
-                # ember flicker: cycle accent -> spark per fleck+frame
-                phase = (x * 3 + y * 5 + frame * 2) % frames
-                t = phase / max(1, frames - 1)
-                glow = 0.5 + 0.5 * math.sin(2 * math.pi * t)
-                col = tuple(int(pal.accent[i] + (pal.spark[i] - pal.accent[i]) * glow)
-                            for i in range(3))
-                p[x, y] = (*col, 255)
-            else:
-                p[x, y] = (*(pal.accent if (x + y) % 3 else pal.spark), 255)
+                col = _warm(pal, x, y, frame, col, 0.20)
+        elif role == 'l':
+            col = _shade(pal.light, 1.0)
+            if pal.animated:
+                col = _warm(pal, x, y, frame, col, 0.12)
+        elif role == 'd':
+            col = _shade(pal.dark, 1.0)
+            if pal.animated:
+                col = _warm(pal, x, y, frame, col, 0.28)
+        elif role == 'e':
+            col = _shade(pal.edge, 1.0)
+        elif role == 'g':
+            col = _shade(pal.leather, 1.0)
+        elif role == 'k':
+            col = _shade(pal.leather_d, 1.0)
+        elif role == 'm':
+            col = _shade(pal.metal, 1.0)
+        elif role == 'n':
+            col = _shade(pal.metal_d, 1.0)
+        elif role == 'a':
+            col = (*_accent_colour(pal, x, y, frame), 255)
+        elif role == 'p':
+            col = (*pal.spark, 255)
+        else:
+            continue
+        p[x, y] = col
     return _outline(img, pal)
 
 
 def save_item(name, mask, pal):
-    frames = 6 if pal.animated else 1
-    imgs = [render_frame(mask, pal, f, frames) for f in range(frames)]
+    frames = FRAMES if pal.animated else 1
+    imgs = [render_frame(mask, pal, f) for f in range(frames)]
     if frames == 1:
         imgs[0].save(os.path.join(ITEM_DIR, f"{name}.png"))
+        _rm(os.path.join(ITEM_DIR, f"{name}.png.mcmeta"))
     else:
         strip = Image.new("RGBA", (16, 16 * frames), TRANSPARENT)
         for f, im in enumerate(imgs):
             strip.paste(im, (0, 16 * f))
         strip.save(os.path.join(ITEM_DIR, f"{name}.png"))
-        with open(os.path.join(ITEM_DIR, f"{name}.png.mcmeta"), "w") as fh:
-            fh.write('{\n "animation": {\n  "frametime": 3\n }\n}\n')
+        _write_mcmeta(os.path.join(ITEM_DIR, f"{name}.png.mcmeta"))
     return imgs[0]
+
+
+def _write_mcmeta(path, frametime=FRAMETIME):
+    with open(path, "w") as fh:
+        fh.write('{\n "animation": {\n  "frametime": %d\n }\n}\n' % frametime)
+
+
+def _rm(path):
+    if os.path.exists(path):
+        os.remove(path)
 
 
 def build_ore():
@@ -300,29 +397,90 @@ def build_ore():
 
 
 def build_blood():
-    img = Image.new("RGBA", (16, 16), TRANSPARENT)
-    d = ImageDraw.Draw(img)
-    d.ellipse([5, 6, 11, 13], fill=(120, 12, 16, 255))     # droplet body
-    d.polygon([(8, 2), (6, 7), (10, 7)], fill=(120, 12, 16, 255))  # tip
-    d.ellipse([6, 8, 9, 11], fill=(180, 30, 30, 255))       # sheen
-    d.point((7, 9), fill=(230, 90, 90, 255))
-    img.save(os.path.join(ITEM_DIR, "dragon_blood.png"))
+    """An 8-frame vial-drop of fervent dragon blood: the body roils with a
+    travelling crimson->ember heat wave and a bobbing specular, so it reads as
+    living, boiling blood rather than a flat droplet."""
+    frames = FRAMES
+    # droplet silhouette: rounded body + tapered top
+    inside = set()
+    for x in range(16):
+        for y in range(16):
+            in_body = (x - 8) ** 2 / 10.0 + (y - 10) ** 2 / 12.0 <= 1.0
+            in_tip = 2 <= y <= 9 and abs(x - 8) <= (y - 2) * 0.55
+            if in_body or in_tip:
+                inside.add((x, y))
+    rim = (70, 8, 12)
+    deep = (104, 12, 16)
+    crim = (176, 26, 26)
+    hot = (222, 66, 40)
+    ember = (255, 150, 60)
+    strip = Image.new("RGBA", (16, 16 * frames), TRANSPARENT)
+    first = None
+    for f in range(frames):
+        im = Image.new("RGBA", (16, 16), TRANSPARENT)
+        p = im.load()
+        t = f / frames
+        for (x, y) in inside:
+            edge = not all((x + dx, y + dy) in inside
+                           for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            if edge:
+                p[x, y] = (*rim, 255)
+                continue
+            wave = 0.5 + 0.5 * math.sin(2.0 * math.pi * (y * 0.28 + x * 0.08 - t))
+            wave = wave ** 1.5
+            if wave < 0.30:
+                col = deep
+            elif wave < 0.62:
+                col = crim
+            elif wave < 0.85:
+                col = hot
+            else:
+                col = ember
+            p[x, y] = (*col, 255)
+        # bobbing specular highlight near the upper-left of the body
+        sy = 8 + int(round(1.5 * math.sin(2.0 * math.pi * t)))
+        for (hx, hy) in ((7, sy), (7, sy + 1), (8, sy)):
+            if (hx, hy) in inside:
+                p[hx, hy] = (255, 205, 150, 255)
+        im = _outline(im, LORD)
+        strip.paste(im, (0, 16 * f))
+        if first is None:
+            first = im
+    strip.save(os.path.join(ITEM_DIR, "dragon_blood.png"))
+    _write_mcmeta(os.path.join(ITEM_DIR, "dragon_blood.png.mcmeta"))
+    return first
 
 
 def build_armor_layer(tier, pal):
-    """Filled 64x32 layer: the game samples each equipped piece's region, so a
-    fully tinted plate reads as tier-coloured armour on the body."""
+    """Worn-armour layer (64x32 humanoid + leggings sheet). Brushed steel with
+    soft vertical shading and a couple of accent trim bands / rivets — reads as
+    plate on the body and gives armour trims a clean base to sit on. Dragon-lord
+    additionally gets crimson blood veins streaking the plate."""
     for w, h, folder in ((64, 32, EQUIP_H), (64, 32, EQUIP_L)):
         img = Image.new("RGBA", (w, h), TRANSPARENT)
         d = ImageDraw.Draw(img)
-        rng = random.Random(hash(tier) & 0xFFFF)
+        rng = random.Random((hash(tier) ^ (w * 7)) & 0xFFFF)
         for y in range(h):
             for x in range(w):
-                v = rng.uniform(0.86, 1.08)
-                d.point((x, y), fill=_shade(pal.base, v))
-        for _ in range(70):                        # rivets / accent studs
+                # gentle brushed shading + faint grain
+                shade = 0.90 + 0.14 * math.sin(x * 0.5) * 0.3 + rng.uniform(-0.04, 0.06)
+                d.point((x, y), fill=_shade(pal.steel, shade))
+        for y in (0, h - 1):                          # top/bottom rim darkening
+            for x in range(w):
+                d.point((x, y), fill=_shade(pal.dark, 1.0))
+        for _ in range(40):                           # rivets
             x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
-            d.point((x, y), fill=(*(pal.accent if rng.random() < 0.6 else pal.light), 255))
+            d.point((x, y), fill=_shade(pal.light, 1.0))
+        if pal.animated:                              # crimson blood veins
+            for _ in range(26):
+                x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
+                d.point((x, y), fill=(*pal.accent, 255))
+                if rng.random() < 0.4:
+                    d.point((min(w - 1, x + 1), y), fill=(*pal.spark, 255))
+        else:                                         # cold blue temper flecks
+            for _ in range(18):
+                x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
+                d.point((x, y), fill=(*pal.accent, 255))
         img.save(os.path.join(folder, f"{tier}.png"))
 
 
@@ -465,6 +623,44 @@ def build_gui():
     img.save(os.path.join(GUI_DIR, "dragonlord_forge.png"))
 
 
+def build_keeper():
+    """Dragon Keeper profession overlay (64x64, villager UV). Dark ashen robe
+    with crimson trim and a gold dragon sigil — leaves the head/face to the
+    biome base. Broad-stroke UV: torso + legs + arms robe regions."""
+    vdir = os.path.join(RES, "textures", "entity", "villager", "profession")
+    os.makedirs(vdir, exist_ok=True)
+    img = Image.new("RGBA", (64, 64), TRANSPARENT)
+    d = ImageDraw.Draw(img)
+    rng = random.Random(41)
+    robe = (52, 44, 54)
+    trim = (150, 36, 32)
+    gold = (224, 186, 78)
+
+    def cloth(x0, y0, x1, y1):
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                d.point((x, y), fill=_shade(robe, rng.uniform(0.82, 1.12)))
+
+    # body robe (front/back/sides band on the villager body UV) + legs
+    cloth(16, 20, 40, 38)          # torso wrap
+    cloth(0, 20, 16, 32)           # overlay: right leg
+    cloth(0, 36, 16, 48)           # overlay: left leg
+    cloth(40, 20, 56, 35)          # arms
+    # crimson sash down the chest + gold sigil
+    for y in range(20, 34):
+        d.point((26, y), fill=(*trim, 255))
+        d.point((27, y), fill=(*trim, 255))
+    d.point((26, 24), fill=(*gold, 255)); d.point((27, 24), fill=(*gold, 255))
+    d.point((25, 25), fill=(*gold, 255)); d.point((28, 25), fill=(*gold, 255))
+    d.point((26, 26), fill=(*gold, 255)); d.point((27, 26), fill=(*gold, 255))
+    # hood band on the head base (partial, not the face)
+    for x in range(16, 40):
+        d.point((x, 20), fill=(*trim, 255))
+    img.save(os.path.join(vdir, "dragon_keeper.png"))
+    with open(os.path.join(vdir, "dragon_keeper.png.mcmeta"), "w") as fh:
+        fh.write('{\n "villager": {\n  "hat": "none"\n }\n}\n')
+
+
 def build_preview(previews):
     cols = 10
     rows = (len(previews) + cols - 1) // cols
@@ -483,6 +679,7 @@ if __name__ == "__main__":
             previews.append((f"{tier}_{part}", save_item(f"{tier}_{part}", fn(), pal)))
         build_armor_layer(tier, pal)
     previews.append(("star_dust", save_item("star_dust", dust(), STAR)))
-    build_ore(); build_blood(); build_forge_block(); build_gui()
+    previews.append(("dragon_blood", build_blood()))
+    build_ore(); build_forge_block(); build_gui(); build_keeper()
     build_preview(previews)
     print("wrote item/block/armour textures into", RES)

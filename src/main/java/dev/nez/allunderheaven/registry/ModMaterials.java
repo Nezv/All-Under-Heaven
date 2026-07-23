@@ -41,21 +41,28 @@ public final class ModMaterials {
     public static final ResourceKey<EquipmentAsset> DRAGONLORD_ASSET =
             ResourceKey.create(EquipmentAssets.ROOT_ID, AllUnderHeaven.id("dragonlord"));
 
-    /** Star-forged: a hair above diamond, meteoric and enchant-hungry. */
-    public static final ToolMaterial STAR_FORGED_TOOL = new ToolMaterial(
-            BlockTags.INCORRECT_FOR_DIAMOND_TOOL, 1900, 8.5F, 3.5F, 15, STAR_FORGED_INGOTS);
+    // Modpack-tuned: both tiers mine at the netherite level (ancient debris and
+    // all), and sit a fixed step above netherite so they read as true endgame.
+    //   Star-forged = netherite + 2  (attack, mining speed, per-slot defence)
+    //   Dragon-lord = netherite + 6
+    // Netherite baselines: tool speed 9.0, attack bonus 4.0; armour defence
+    // {boots 3, legs 6, chest 8, helm 3, body 11}.
 
-    /** Dragon-lord: the endgame, past netherite. */
+    /** Star-forged: netherite + 2 — meteoric and enchant-hungry. */
+    public static final ToolMaterial STAR_FORGED_TOOL = new ToolMaterial(
+            BlockTags.INCORRECT_FOR_NETHERITE_TOOL, 2400, 11.0F, 6.0F, 15, STAR_FORGED_INGOTS);
+
+    /** Dragon-lord: netherite + 6 — the blood-forged apex. */
     public static final ToolMaterial DRAGONLORD_TOOL = new ToolMaterial(
-            BlockTags.INCORRECT_FOR_NETHERITE_TOOL, 2600, 9.5F, 4.5F, 18, DRAGONLORD_INGOTS);
+            BlockTags.INCORRECT_FOR_NETHERITE_TOOL, 3400, 15.0F, 10.0F, 18, DRAGONLORD_INGOTS);
 
     public static final ArmorMaterial STAR_FORGED_ARMOR = new ArmorMaterial(
-            37, defense(3, 6, 8, 3, 11), 12, SoundEvents.ARMOR_EQUIP_DIAMOND,
-            2.5F, 0.0F, STAR_FORGED_INGOTS, STAR_FORGED_ASSET);
+            40, defense(5, 8, 10, 5, 13), 15, SoundEvents.ARMOR_EQUIP_DIAMOND,
+            3.0F, 0.10F, STAR_FORGED_INGOTS, STAR_FORGED_ASSET);
 
     public static final ArmorMaterial DRAGONLORD_ARMOR = new ArmorMaterial(
-            45, defense(3, 7, 9, 4, 13), 16, SoundEvents.ARMOR_EQUIP_NETHERITE,
-            3.5F, 0.15F, DRAGONLORD_INGOTS, DRAGONLORD_ASSET);
+            50, defense(9, 12, 14, 9, 17), 18, SoundEvents.ARMOR_EQUIP_NETHERITE,
+            4.0F, 0.15F, DRAGONLORD_INGOTS, DRAGONLORD_ASSET);
 
     private static Map<ArmorType, Integer> defense(int boots, int legs, int chest,
             int helm, int body) {
