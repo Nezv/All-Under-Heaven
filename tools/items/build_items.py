@@ -35,50 +35,40 @@ FRAMES = 8            # animation length for the blood-forged tier
 FRAMETIME = 3        # ticks per frame
 
 
-class Palette:
-    """Colours for one tier. Roles used by the silhouettes map onto these."""
-    def __init__(self, steel, light, dark, edge, leather, leather_d,
-                 metal, metal_d, accent, spark, outline, animated):
-        self.steel = steel          # blade / plate body
-        self.light = light          # lit bevel, top faces
-        self.dark = dark            # shaded edges, undersides
-        self.edge = edge            # bright cutting edge / rim highlight
-        self.leather = leather      # grip wrap / wooden haft
-        self.leather_d = leather_d  # grip shadow / wrap binding
-        self.metal = metal          # guard, pommel, rivets (bronze)
-        self.metal_d = metal_d
-        self.accent = accent        # tier colour: blue temper / crimson blood
-        self.spark = spark          # brightest accent: star glint / ember
-        self.outline = outline
+# ---- material ramps --------------------------------------------------------
+# Per the Minecraft style guide, shade each material as a HUE-SHIFTED ramp, not
+# a single flat colour: hue + saturation + value all shift between steps, so
+# shadows read cool/deep and highlights warm/bright. Index 0 = deep shadow ..
+# 4 = highlight. Each item then MIXES several ramps by region (plate + fitting
+# + grip + accent), and the renderer picks a step from each pixel's form.
+
+DARKPLATE = [(20, 20, 28), (36, 38, 50), (58, 62, 78), (98, 104, 124), (152, 162, 184)]
+BRONZE    = [(56, 32, 18), (100, 60, 30), (150, 100, 52), (198, 148, 88), (236, 198, 138)]
+GILT      = [(94, 56, 20), (150, 100, 34), (206, 152, 54), (236, 194, 98), (255, 236, 160)]
+BLOOD     = [(64, 10, 20), (120, 20, 28), (182, 36, 34), (224, 92, 46), (255, 168, 78)]
+WOOD      = [(36, 24, 14), (60, 42, 24), (92, 66, 40), (126, 94, 58), (162, 128, 86)]
+LEATHER   = [(26, 12, 14), (44, 22, 24), (68, 38, 36), (100, 60, 50), (136, 90, 70)]
+COSMIC    = [(26, 32, 50), (44, 56, 86), (78, 100, 142), (124, 156, 206), (184, 214, 252)]
+
+
+class Tier:
+    """A kit's material mix: a base plate ramp, a metal-fitting ramp (guards,
+    pommels, trim, rivets), a grip ramp (wood/leather) and an accent ramp (the
+    tier pop). `animated` drives the flowing blood on the dragon-lord kit."""
+    def __init__(self, base, fitting, grip, accent, animated=False):
+        self.base = base
+        self.fitting = fitting
+        self.grip = grip
+        self.accent = accent
         self.animated = animated
 
 
-# Star-forged: warm bronze/brass plate with gilded edges (Knight of the Seven
-# Kingdoms). `metal` is a darker bronze for fittings; `accent`/`spark` are the
-# gilded embossing.
-STAR = Palette(
-    steel=(150, 104, 52), light=(214, 168, 92), dark=(92, 60, 30),
-    edge=(238, 202, 130), leather=(74, 48, 30), leather_d=(46, 28, 16),
-    metal=(120, 92, 44), metal_d=(80, 60, 30),
-    accent=(240, 200, 96), spark=(255, 234, 170),
-    outline=(30, 20, 12), animated=False)
-
-# Dragon-lord: near-black Targaryen plate, GOLD fittings/trim (`metal`), and
-# crimson blood (`accent`) that flows + bleeds ember heat into the steel.
-LORD = Palette(
-    steel=(46, 46, 52), light=(84, 84, 94), dark=(22, 22, 27),
-    edge=(150, 152, 162), leather=(40, 20, 22), leather_d=(24, 12, 14),
-    metal=(198, 156, 66), metal_d=(128, 98, 42),
-    accent=(198, 30, 30), spark=(255, 150, 50),
-    outline=(10, 8, 10), animated=True)
-
-# star_dust: cold cosmic blue-grey grit (kept independent of the bronze kit).
-COSMIC = Palette(
-    steel=(70, 78, 96), light=(120, 140, 175), dark=(40, 45, 60),
-    edge=(170, 200, 245), leather=(50, 54, 68), leather_d=(34, 36, 48),
-    metal=(90, 96, 116), metal_d=(60, 64, 80),
-    accent=(70, 130, 220), spark=(170, 215, 255),
-    outline=(20, 22, 32), animated=False)
+# Star-forged: bronze plate + gilded fittings + wooden hafts, gold embossing.
+STAR = Tier(base=BRONZE, fitting=GILT, grip=WOOD, accent=GILT, animated=False)
+# Dragon-lord: near-black plate + gold trim + dark leather + flowing crimson.
+LORD = Tier(base=DARKPLATE, fitting=GILT, grip=LEATHER, accent=BLOOD, animated=True)
+# star_dust: cold cosmic grit.
+DUST = Tier(base=COSMIC, fitting=COSMIC, grip=COSMIC, accent=COSMIC, animated=False)
 
 
 def _shade(c, f):
@@ -290,7 +280,7 @@ SHAPES = {
 
 # ---- rendering -------------------------------------------------------------
 
-def _outline(img, pal):
+def _outline(img, colour):
     px = img.load()
     w, h = img.size
     out = img.copy()
@@ -302,72 +292,66 @@ def _outline(img, pal):
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < w and 0 <= ny < h and px[nx, ny][3] != 0:
-                    op[x, y] = (*pal.outline, 255)
+                    op[x, y] = (*colour, 255)
                     break
     return out
 
 
 def _flow(x, y, frame):
-    """A travelling wave up the blade axis, 0..1, used for the blood glow."""
+    """A travelling wave up the blade axis, 0..1, drives the blood glow."""
     return 0.5 + 0.5 * math.sin(2.0 * math.pi * ((x - y) * 0.22 - frame / FRAMES))
 
 
-def _accent_colour(pal, x, y, frame):
-    """The tier accent. Star = static blue temper. Dragon-lord = crimson blood
-    that flows up the blade over the frames, embers riding the crest."""
-    if not pal.animated:
-        return pal.spark if (x + y) % 4 == 0 else pal.accent
-    glow = _flow(x, y, frame) ** 1.6              # mostly deep, briefly hot
-    return _lerp(pal.accent, pal.spark, glow)[:3]
+# role -> (ramp name on the Tier, base index into that 5-step ramp)
+_ROLE = {
+    's': ("base", 2), 'l': ("base", 3), 'd': ("base", 1), 'e': ("base", 4),
+    'g': ("grip", 2), 'k': ("grip", 1),
+    'm': ("fitting", 2), 'n': ("fitting", 1),
+    'a': ("accent", 2), 'p': ("accent", 4),
+}
 
 
-def _warm(pal, x, y, frame, col, amt):
-    """Bleed a faint travelling ember heat into the steel of the blood-forged
-    tier, so the whole piece pulses as if freshly quenched in dragon blood."""
-    return (*_lerp(col[:3], pal.spark, amt * _flow(x, y, frame)), 255)
-
-
-def render_frame(mask, pal, frame):
+def render_frame(mask, tier, frame):
+    """Shade the silhouette with hue-shifted ramps, a top-left form bevel and a
+    light transition dither — the anti-flat pipeline the style guide calls for."""
+    opaque = set(mask.keys())
+    ramp_of = {"base": tier.base, "fitting": tier.fitting,
+               "grip": tier.grip, "accent": tier.accent}
+    # pass 1: choose a ramp + step per pixel (role step, nudged by the form)
+    idx, ramps = {}, {}
+    for (x, y), role in mask.items():
+        if role not in _ROLE:
+            continue
+        rname, i = _ROLE[role]
+        if (x - 1, y - 1) not in opaque:          # top-left silhouette edge = lit
+            i += 1
+        if (x + 1, y + 1) not in opaque:          # bottom-right edge = shaded
+            i -= 1
+        if role in ("a", "p") and tier.animated:  # crimson->ember blood flow
+            i = 1 + int(round(3 * (_flow(x, y, frame) ** 1.4)))
+        ramps[(x, y)] = ramp_of[rname]
+        idx[(x, y)] = max(0, min(4, i))
+    # pass 2: emit, dithering the mid step toward an adjacent highlight
     img = Image.new("RGBA", (16, 16), TRANSPARENT)
     p = img.load()
-    for (x, y), role in mask.items():
-        if not (0 <= x < 16 and 0 <= y < 16):
-            continue
-        if role == 's':
-            col = _shade(pal.steel, 1.0)
-            if pal.animated:
-                col = _warm(pal, x, y, frame, col, 0.20)
-        elif role == 'l':
-            col = _shade(pal.light, 1.0)
-            if pal.animated:
-                col = _warm(pal, x, y, frame, col, 0.12)
-        elif role == 'd':
-            col = _shade(pal.dark, 1.0)
-            if pal.animated:
-                col = _warm(pal, x, y, frame, col, 0.28)
-        elif role == 'e':
-            col = _shade(pal.edge, 1.0)
-        elif role == 'g':
-            col = _shade(pal.leather, 1.0)
-        elif role == 'k':
-            col = _shade(pal.leather_d, 1.0)
-        elif role == 'm':
-            col = _shade(pal.metal, 1.0)
-        elif role == 'n':
-            col = _shade(pal.metal_d, 1.0)
-        elif role == 'a':
-            col = (*_accent_colour(pal, x, y, frame), 255)
-        elif role == 'p':
-            col = (*pal.spark, 255)
-        else:
-            continue
-        p[x, y] = col
-    return _outline(img, pal)
+    for (x, y) in idx:
+        ramp = ramps[(x, y)]
+        i = idx[(x, y)]
+        if i == 2 and (x + y) % 2 == 0:
+            for nb in ((x - 1, y), (x, y - 1), (x + 1, y), (x, y + 1)):
+                if ramps.get(nb) is ramp and idx.get(nb, 0) >= 3:
+                    i = 3
+                    break
+        col = ramp[i]
+        if tier.animated and ramp is tier.base:   # ember heat pulsing in the black plate
+            col = _lerp(col, BLOOD[4], 0.16 * _flow(x, y, frame))
+        p[x, y] = (*col, 255)
+    return _outline(img, _lerp(tier.base[0], (0, 0, 0), 0.35))
 
 
-def save_item(name, mask, pal):
-    frames = FRAMES if pal.animated else 1
-    imgs = [render_frame(mask, pal, f) for f in range(frames)]
+def save_item(name, mask, tier):
+    frames = FRAMES if tier.animated else 1
+    imgs = [render_frame(mask, tier, f) for f in range(frames)]
     if frames == 1:
         imgs[0].save(os.path.join(ITEM_DIR, f"{name}.png"))
         _rm(os.path.join(ITEM_DIR, f"{name}.png.mcmeta"))
@@ -423,11 +407,8 @@ def build_blood():
             in_tip = 2 <= y <= 9 and abs(x - 8) <= (y - 2) * 0.55
             if in_body or in_tip:
                 inside.add((x, y))
-    rim = (70, 8, 12)
-    deep = (104, 12, 16)
-    crim = (176, 26, 26)
-    hot = (222, 66, 40)
-    ember = (255, 150, 60)
+    rim = _lerp(BLOOD[0], (0, 0, 0), 0.25)
+    deep, crim, hot, ember = BLOOD[1], BLOOD[2], BLOOD[3], BLOOD[4]
     strip = Image.new("RGBA", (16, 16 * frames), TRANSPARENT)
     first = None
     for f in range(frames):
@@ -456,7 +437,7 @@ def build_blood():
         for (hx, hy) in ((7, sy), (7, sy + 1), (8, sy)):
             if (hx, hy) in inside:
                 p[hx, hy] = (255, 205, 150, 255)
-        im = _outline(im, LORD)
+        im = _outline(im, _lerp(BLOOD[0], (0, 0, 0), 0.3))
         strip.paste(im, (0, 16 * f))
         if first is None:
             first = im
@@ -465,37 +446,9 @@ def build_blood():
     return first
 
 
-def build_armor_layer(tier, pal):
-    """Worn-armour layer (64x32 humanoid + leggings sheet). Brushed steel with
-    soft vertical shading and a couple of accent trim bands / rivets — reads as
-    plate on the body and gives armour trims a clean base to sit on. Dragon-lord
-    additionally gets crimson blood veins streaking the plate."""
-    for w, h, folder in ((64, 32, EQUIP_H), (64, 32, EQUIP_L)):
-        img = Image.new("RGBA", (w, h), TRANSPARENT)
-        d = ImageDraw.Draw(img)
-        rng = random.Random((hash(tier) ^ (w * 7)) & 0xFFFF)
-        for y in range(h):
-            for x in range(w):
-                # gentle brushed shading + faint grain
-                shade = 0.90 + 0.14 * math.sin(x * 0.5) * 0.3 + rng.uniform(-0.04, 0.06)
-                d.point((x, y), fill=_shade(pal.steel, shade))
-        for y in (0, h - 1):                          # top/bottom rim darkening
-            for x in range(w):
-                d.point((x, y), fill=_shade(pal.dark, 1.0))
-        for _ in range(40):                           # rivets
-            x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
-            d.point((x, y), fill=_shade(pal.light, 1.0))
-        if pal.animated:                              # crimson blood veins
-            for _ in range(26):
-                x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
-                d.point((x, y), fill=(*pal.accent, 255))
-                if rng.random() < 0.4:
-                    d.point((min(w - 1, x + 1), y), fill=(*pal.spark, 255))
-        else:                                         # cold blue temper flecks
-            for _ in range(18):
-                x, y = rng.randint(0, w - 1), rng.randint(0, h - 1)
-                d.point((x, y), fill=(*pal.accent, 255))
-        img.save(os.path.join(folder, f"{tier}.png"))
+# NOTE: the worn armour look is now custom GeckoLib 3D geometry (see
+# tools/armor/build_armor.py); the old flat 64x32 equipment layers are no
+# longer generated here.
 
 
 GUI_DIR = os.path.join(RES, "textures", "gui", "container")
@@ -687,12 +640,11 @@ def build_preview(previews):
 
 if __name__ == "__main__":
     previews = []
-    for tier, pal in (("star_forged", STAR), ("dragonlord", LORD)):
-        previews.append((f"{tier}_steel", save_item(f"{tier}_steel", ingot(), pal)))
+    for name, tier in (("star_forged", STAR), ("dragonlord", LORD)):
+        previews.append((f"{name}_steel", save_item(f"{name}_steel", ingot(), tier)))
         for part, fn in SHAPES.items():
-            previews.append((f"{tier}_{part}", save_item(f"{tier}_{part}", fn(), pal)))
-        build_armor_layer(tier, pal)
-    previews.append(("star_dust", save_item("star_dust", dust(), COSMIC)))
+            previews.append((f"{name}_{part}", save_item(f"{name}_{part}", fn(), tier)))
+    previews.append(("star_dust", save_item("star_dust", dust(), DUST)))
     previews.append(("dragon_blood", build_blood()))
     build_ore(); build_forge_block(); build_gui(); build_keeper()
     build_preview(previews)
