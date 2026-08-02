@@ -4,6 +4,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.feature.armor.GeoArmorItem;
 import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.HoeItem;
@@ -143,7 +144,10 @@ public final class ModItems {
     }
 
     private static DeferredItem<Item> armor(String name, ArmorMaterial mat, ArmorType type, Rarity r, boolean fp) {
-        return ITEMS.registerItem(name, Item::new,
+        // GeckoLib-rendered 3D armour; tier drives the geo model + texture.
+        String tier = name.startsWith("dragonlord") ? "dragonlord" : "star_forged";
+        return ITEMS.registerItem(name,
+                p -> new GeoArmorItem(p, tier),
                 () -> apply(new Item.Properties().humanoidArmor(mat, type), r, fp));
     }
 

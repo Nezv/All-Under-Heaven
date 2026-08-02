@@ -639,10 +639,16 @@ def build_preview(previews):
 
 
 if __name__ == "__main__":
+    # Dragon-lord armour ICONS are authored in the Claude Design project and
+    # imported directly, so don't regenerate them here (that would re-animate
+    # and clobber the designed sprites). Weapons/tools/steel still come from here.
+    imported = {("dragonlord", p) for p in ("helmet", "chestplate", "leggings", "boots")}
     previews = []
     for name, tier in (("star_forged", STAR), ("dragonlord", LORD)):
         previews.append((f"{name}_steel", save_item(f"{name}_steel", ingot(), tier)))
         for part, fn in SHAPES.items():
+            if (name, part) in imported:
+                continue
             previews.append((f"{name}_{part}", save_item(f"{name}_{part}", fn(), tier)))
     previews.append(("star_dust", save_item("star_dust", dust(), DUST)))
     previews.append(("dragon_blood", build_blood()))

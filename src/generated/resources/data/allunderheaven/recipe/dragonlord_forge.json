@@ -1,14 +1,13 @@
 {
   "type": "minecraft:crafting_shaped",
   "key": {
-    "B": "minecraft:blackstone",
-    "M": "minecraft:magma_block",
-    "S": "allunderheaven:star_forged_steel"
+    "B": "allunderheaven:dragon_blood",
+    "O": "minecraft:obsidian"
   },
   "pattern": [
-    "BSB",
-    "SMS",
-    "BSB"
+    "OOO",
+    "OBO",
+    "OOO"
   ],
   "result": {
     "id": "allunderheaven:dragonlord_forge"

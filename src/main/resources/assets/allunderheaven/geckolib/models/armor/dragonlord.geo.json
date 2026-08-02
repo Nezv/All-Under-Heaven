@@ -1,0 +1,128 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.dragon_lord_armor",
+        "texture_width": 64,
+        "texture_height": 32,
+        "visible_bounds_width": 3,
+        "visible_bounds_height": 4,
+        "visible_bounds_offset": [0, 1.5, 0]
+      },
+      "bones": [
+        {
+          "name": "armorHead",
+          "pivot": [0, 24, 0],
+          "cubes": [
+            { "origin": [-4, 24, -4], "size": [8, 8, 8], "uv": [0, 0], "inflate": 1.02 }
+          ]
+        },
+        {
+          "name": "hornRight",
+          "parent": "armorHead",
+          "pivot": [-4, 30, 0],
+          "rotation": [0, 0, 22],
+          "cubes": [
+            { "origin": [-6.5, 29.5, -1.5], "size": [2, 2, 3], "uv": [32, 0], "inflate": 0.25 },
+            { "origin": [-8.5, 31, -1], "size": [2, 2, 2], "uv": [42, 0], "rotation": [0, -14, 42], "pivot": [-6.5, 31, 0] },
+            { "origin": [-10, 33, -0.5], "size": [1, 1, 2], "uv": [50, 0], "rotation": [0, -22, 62], "pivot": [-8.5, 32, 0] }
+          ]
+        },
+        {
+          "name": "hornLeft",
+          "parent": "armorHead",
+          "pivot": [4, 30, 0],
+          "rotation": [0, 0, -22],
+          "mirror": true,
+          "cubes": [
+            { "origin": [4.5, 29.5, -1.5], "size": [2, 2, 3], "uv": [32, 0], "inflate": 0.25, "mirror": true },
+            { "origin": [6.5, 31, -1], "size": [2, 2, 2], "uv": [42, 0], "rotation": [0, 14, -42], "pivot": [6.5, 31, 0], "mirror": true },
+            { "origin": [9, 33, -0.5], "size": [1, 1, 2], "uv": [50, 0], "rotation": [0, 22, -62], "pivot": [8.5, 32, 0], "mirror": true }
+          ]
+        },
+        {
+          "name": "crestRight",
+          "parent": "armorHead",
+          "pivot": [-3, 30, 2],
+          "rotation": [-14, -24, 10],
+          "cubes": [
+            { "origin": [-4, 30, 1], "size": [1, 4, 6], "uv": [32, 6] }
+          ]
+        },
+        {
+          "name": "crestLeft",
+          "parent": "armorHead",
+          "pivot": [3, 30, 2],
+          "rotation": [-14, 24, -10],
+          "mirror": true,
+          "cubes": [
+            { "origin": [3, 30, 1], "size": [1, 4, 6], "uv": [32, 6], "mirror": true }
+          ]
+        },
+        {
+          "name": "plume",
+          "parent": "armorHead",
+          "pivot": [0, 32, 2],
+          "rotation": [18, 0, 0],
+          "cubes": [
+            { "origin": [-0.5, 31, 1], "size": [1, 4, 5], "uv": [46, 6] },
+            { "origin": [-0.5, 30, 4.5], "size": [1, 4, 5], "uv": [46, 6], "rotation": [34, 0, 0], "pivot": [0, 32, 5] }
+          ]
+        },
+        {
+          "name": "armorBody",
+          "pivot": [0, 24, 0],
+          "cubes": [
+            { "origin": [-4, 12, -2], "size": [8, 12, 4], "uv": [16, 16], "inflate": 1.02 }
+          ]
+        },
+        {
+          "name": "armorRightArm",
+          "pivot": [-5, 22, 0],
+          "cubes": [
+            { "origin": [-8, 12, -2], "size": [4, 12, 4], "uv": [40, 16], "inflate": 1.02 }
+          ]
+        },
+        {
+          "name": "armorLeftArm",
+          "pivot": [5, 22, 0],
+          "mirror": true,
+          "cubes": [
+            { "origin": [4, 12, -2], "size": [4, 12, 4], "uv": [40, 16], "inflate": 1.02, "mirror": true }
+          ]
+        },
+        {
+          "name": "armorRightLeg",
+          "pivot": [-1.9, 12, 0],
+          "cubes": [
+            { "origin": [-4, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "inflate": 0.6 }
+          ]
+        },
+        {
+          "name": "armorLeftLeg",
+          "pivot": [1.9, 12, 0],
+          "mirror": true,
+          "cubes": [
+            { "origin": [0, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "inflate": 0.6, "mirror": true }
+          ]
+        },
+        {
+          "name": "armorRightBoot",
+          "pivot": [-1.9, 12, 0],
+          "cubes": [
+            { "origin": [-4, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "inflate": 1.1 }
+          ]
+        },
+        {
+          "name": "armorLeftBoot",
+          "pivot": [1.9, 12, 0],
+          "mirror": true,
+          "cubes": [
+            { "origin": [0, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "inflate": 1.1, "mirror": true }
+          ]
+        }
+      ]
+    }
+  ]
+}

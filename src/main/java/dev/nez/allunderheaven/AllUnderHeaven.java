@@ -14,6 +14,7 @@ import dev.nez.allunderheaven.registry.ModMenus;
 import dev.nez.allunderheaven.registry.ModParticles;
 import dev.nez.allunderheaven.registry.ModSounds;
 import dev.nez.allunderheaven.registry.ModStructures;
+import dev.nez.allunderheaven.registry.ModVillagers;
 import net.minecraft.resources.Identifier;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -42,6 +43,8 @@ public class AllUnderHeaven {
         ModParticles.PARTICLE_TYPES.register(modEventBus);
         ModStructures.STRUCTURE_TYPES.register(modEventBus);
         ModStructures.STRUCTURE_PIECES.register(modEventBus);
+        ModVillagers.POI_TYPES.register(modEventBus);
+        ModVillagers.PROFESSIONS.register(modEventBus);
         ModSounds.SOUND_EVENTS.register(modEventBus);
 
         modEventBus.addListener(this::commonSetup);

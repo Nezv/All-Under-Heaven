@@ -66,15 +66,14 @@ public class ModRecipeProvider extends RecipeProvider {
                 ModItems.DRAGONLORD_SHOVEL, ModItems.DRAGONLORD_HOE, ModItems.DRAGONLORD_HELMET,
                 ModItems.DRAGONLORD_CHESTPLATE, ModItems.DRAGONLORD_LEGGINGS, ModItems.DRAGONLORD_BOOTS);
 
-        // the Dragon-lord Forge: a star-forged frame around a magma heart
+        // the Dragon-lord Forge: an obsidian shell around a heart of dragon blood
         ShapedRecipeBuilder.shaped(this.items, RecipeCategory.MISC, ModBlocks.DRAGONLORD_FORGE.get())
-                .pattern("BSB")
-                .pattern("SMS")
-                .pattern("BSB")
-                .define('B', Items.BLACKSTONE)
-                .define('S', ModItems.STAR_FORGED_STEEL.get())
-                .define('M', Items.MAGMA_BLOCK)
-                .unlockedBy("has_star_forged_steel", this.has(ModItems.STAR_FORGED_STEEL.get()))
+                .pattern("OOO")
+                .pattern("OBO")
+                .pattern("OOO")
+                .define('O', Items.OBSIDIAN)
+                .define('B', ModItems.DRAGON_BLOOD.get())
+                .unlockedBy("has_dragon_blood", this.has(ModItems.DRAGON_BLOOD.get()))
                 .save(this.output);
     }
 

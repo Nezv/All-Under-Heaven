@@ -1,6 +1,8 @@
 package dev.nez.allunderheaven.registry;
 
 import dev.nez.allunderheaven.AllUnderHeaven;
+import dev.nez.allunderheaven.feature.dragonkeeper.DragonKeeperHutPiece;
+import dev.nez.allunderheaven.feature.dragonkeeper.DragonKeeperHutStructure;
 import dev.nez.allunderheaven.feature.dragonnest.DragonNestPiece;
 import dev.nez.allunderheaven.feature.dragonnest.DragonNestStructure;
 import net.minecraft.core.registries.Registries;
@@ -27,6 +29,13 @@ public final class ModStructures {
     public static final DeferredHolder<StructurePieceType, StructurePieceType> DRAGON_NEST_PIECE =
             STRUCTURE_PIECES.register("dragon_nest_piece",
                     () -> (StructurePieceType) (context, tag) -> new DragonNestPiece(tag));
+
+    public static final DeferredHolder<StructureType<?>, StructureType<DragonKeeperHutStructure>> DRAGON_KEEPER_HUT =
+            STRUCTURE_TYPES.register("dragon_keeper_hut", () -> () -> DragonKeeperHutStructure.CODEC);
+
+    public static final DeferredHolder<StructurePieceType, StructurePieceType> DRAGON_KEEPER_HUT_PIECE =
+            STRUCTURE_PIECES.register("dragon_keeper_hut_piece",
+                    () -> (StructurePieceType) (context, tag) -> new DragonKeeperHutPiece(tag));
 
     private ModStructures() {
     }

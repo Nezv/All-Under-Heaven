@@ -1,11 +1,11 @@
 {
   "parent": "minecraft:recipes/root",
   "criteria": {
-    "has_star_forged_steel": {
+    "has_dragon_blood": {
       "conditions": {
         "items": [
           {
-            "items": "allunderheaven:star_forged_steel"
+            "items": "allunderheaven:dragon_blood"
           }
         ]
       },
@@ -21,7 +21,7 @@
   "requirements": [
     [
       "has_the_recipe",
-      "has_star_forged_steel"
+      "has_dragon_blood"
     ]
   ],
   "rewards": {

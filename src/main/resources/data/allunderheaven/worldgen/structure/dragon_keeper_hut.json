@@ -1,0 +1,7 @@
+{
+  "type": "allunderheaven:dragon_keeper_hut",
+  "biomes": "#allunderheaven:has_structure/dragon_keeper_hut",
+  "step": "surface_structures",
+  "spawn_overrides": {},
+  "terrain_adaptation": "beard_thin"
+}

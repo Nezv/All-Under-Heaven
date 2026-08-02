@@ -1,0 +1,11 @@
+{
+  "structures": [
+    { "structure": "allunderheaven:dragon_keeper_hut", "weight": 1 }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 32,
+    "separation": 11,
+    "salt": 730411552
+  }
+}
